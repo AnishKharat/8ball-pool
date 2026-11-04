@@ -36,3 +36,5 @@ export const SIDE_HOLE_OFFSET = 0.075; // hole centre beyond the rail line
 export const DT = 0.001;
 export const MAX_SIM_TIME = 60;
 export const KEYFRAME_INTERVAL = 1 / 30;
+
+export const RACK_GAP = 1e-4; // hairline between racked balls, so the break doesn't start in contact

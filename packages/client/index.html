@@ -1,1 +1,58 @@
-<!doctype html><title>Chalkline</title><script type="module" src="/src/main.ts"></script>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chalkline</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #14181d; color: #e8e6df; font: 15px system-ui, sans-serif; }
+  main { display: flex; flex-wrap: wrap; gap: 16px; padding: 12px; justify-content: center; }
+  #stage { flex: 1 1 480px; max-width: 1100px; }
+  #table { display: block; width: 100%; touch-action: none; cursor: crosshair; }
+  #status { min-height: 1.5em; margin: 8px 0; }
+  #bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  button, select { font: inherit; padding: 8px 12px; min-height: 40px; background: #2a3138; color: inherit; border: 1px solid #4a535c; border-radius: 6px; }
+  aside { display: flex; gap: 16px; align-items: flex-start; }
+  .label { font-size: 13px; margin-bottom: 6px; text-align: center; }
+  #hit { position: relative; width: 120px; height: 120px; border-radius: 50%; background: #f4f1e6; touch-action: none; cursor: pointer; }
+  #hitLimit { position: absolute; inset: 25%; border: 1px dashed #8a8778; border-radius: 50%; pointer-events: none; }
+  #hitDot { position: absolute; width: 14px; height: 14px; margin: -7px; border-radius: 50%; background: #c8321e; pointer-events: none; }
+  #fine { display: flex; gap: 8px; justify-content: center; }
+  #fine button { touch-action: none; min-width: 52px; }
+  #power { position: relative; width: 44px; height: 220px; background: #2a3138; border: 1px solid #4a535c; border-radius: 6px; touch-action: none; cursor: grab; overflow: hidden; }
+  #powerFill { position: absolute; left: 0; right: 0; top: 0; height: 0; background: linear-gradient(#e0b040, #c8321e); }
+  :focus-visible { outline: 2px solid #7fd0ff; outline-offset: 2px; }
+</style>
+</head>
+<body>
+<main>
+  <div id="stage">
+    <canvas id="table" aria-label="Pool table. Drag to aim."></canvas>
+    <div id="status" role="status"></div>
+    <div id="bar">
+      <label>Mode <select id="mode"><option value="assist">Assist</option><option value="hard">Hard</option></select></label>
+      <button id="newRack">New rack</button>
+      <button id="giveHand">Ball in hand</button>
+      <button id="callEight">Call the 8</button>
+    </div>
+  </div>
+  <aside>
+    <div>
+      <div class="label">Hit point</div>
+      <div id="hit" aria-label="Cue ball hit point"><div id="hitLimit"></div><div id="hitDot"></div></div>
+      <div class="label" style="margin-top:12px">Fine aim</div>
+      <div id="fine">
+        <button id="fineLeft" aria-label="Rotate aim counterclockwise">&#8634;</button>
+        <button id="fineRight" aria-label="Rotate aim clockwise">&#8635;</button>
+      </div>
+    </div>
+    <div>
+      <div class="label">Pull to shoot</div>
+      <div id="power" role="slider" tabindex="0" aria-label="Shot power. Arrow keys set it, Enter shoots." aria-orientation="vertical" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div id="powerFill"></div></div>
+    </div>
+  </aside>
+</main>
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>
