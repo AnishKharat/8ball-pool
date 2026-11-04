@@ -1,5 +1,5 @@
 import {
-  BALL_R, canPlaceCue, HEAD_STRING_X, MAX_HIT, POCKETS, rackBalls, simulateShot,
+  BALL_R, canPlaceCue, freeCueSpot, MAX_HIT, POCKETS, rackBalls, simulateShot,
   type BallPos, type ShotIntent, type SimResult,
 } from '@chalkline/shared';
 import { buildTracks, sampleTrack, type TrackPoint } from './playback';
@@ -43,13 +43,6 @@ function setStatus(text: string) {
 
 const cueBall = () => balls.find((b) => b.id === 0);
 
-function freeCueSpot(): { x: number; y: number } {
-  for (let k = 0; ; k++) {
-    const y = (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 2.2 * BALL_R;
-    if (canPlaceCue(balls, HEAD_STRING_X, y, false)) return { x: HEAD_STRING_X, y };
-  }
-}
-
 function startRack() {
   balls = rackBalls();
   playback = null;
@@ -80,7 +73,7 @@ function finishPlayback(p: Playback) {
   if (eight?.type === 'pot') setStatus(!calling || called === eight.pocket ? '8 potted.' : '8 potted in the wrong pocket.');
   called = null;
   if (!cueBall()) {
-    balls = [{ id: 0, ...freeCueSpot() }, ...balls];
+    balls = [{ id: 0, ...freeCueSpot(balls) }, ...balls];
     ballInHand = true;
     setStatus('Scratch: ball in hand.');
   }
