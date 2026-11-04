@@ -4,9 +4,9 @@ Update this at the end of every working session. Keep it short and current. Rewr
 
 ## Status
 
-**Current milestone:** 5, not started
-**Next step:** Bot candidate shots and scoring in `packages/server`, then a minimal server shot flow so 1 vs Bot plays through it using `newGame` and `applyShot`.
-**Last updated:** 2026-11-05 (milestones 1-4 done)
+**Current milestone:** 6, not started
+**Next step:** Rooms with codes, lobby, seats and teams around the existing `Match` class, replacing the one-game-per-socket shortcut in `packages/server/src/server.ts`.
+**Last updated:** 2026-11-05 (milestones 1-5 done)
 
 ## Milestones
 
@@ -37,8 +37,8 @@ Update this at the end of every working session. Keep it short and current. Rewr
 - [x] All rules tests from CLAUDE.md pass
 
 ### 5. Bot
-- [ ] Candidate shots, simulated scoring, noise by difficulty
-- [ ] Playable 1 vs Bot through the server
+- [x] Candidate shots, simulated scoring, noise by difficulty
+- [x] Playable 1 vs Bot through the server
 
 ### 6. Multiplayer
 - [ ] Rooms, codes, lobby, seats and teams
@@ -73,6 +73,8 @@ Update this at the end of every working session. Keep it short and current. Rewr
 | 2026-11-05 | The 8 on the break re-racks even with a scratch; a break has no wrong-ball or no-cushion foul | Spec gives the break its own legality test |
 | 2026-11-05 | Shot clock expiry on an unbroken rack passes the break on; in the illegal-break choice it means play on with ball in hand | An unbroken rack can't be played as open table |
 | 2026-11-05 | Teammate cover and forfeit are left to milestone 6 | They depend on connection state, which only the server has |
+| 2026-11-05 | Ball in hand and the called pocket are separate validated messages (`place`, `call`); `shot` carries only the four intent fields | Keeps the shot message to exactly what CLAUDE.md allows |
+| 2026-11-05 | Bot has no bank shot candidates; it only finds kicks through a fan of simulated angles when no ball can be hit directly | Spec says banks only "if cheap" |
 
 ## Physics tuning log
 
@@ -83,7 +85,11 @@ Record constant changes and what prompted them.
 ## Known issues
 
 - **Weak-looking break (decision needed).** At 95% power the rack barely spreads: median ball moves about 5 cm, though breaks stay legal (about 5.9 balls reach a rail, about 1 pot, 12 trials). Cause measured: sequential pairwise contacts act like a Newton's cradle, so one ball leaves at 8.3 m/s while most stay near 0, and the rails take 51% of the energy (ball impacts 23%, cloth 22%). Restitution 0.95-0.98 and rack gap 0.1-2 mm make no difference, so don't tune those. A real fix means resolving near-simultaneous contacts together, which changes the integration spec.
-- Client simulates shots locally and the bar's Ball in hand and Call the 8 buttons stand in for rules (`shortcut:` in `client/src/main.ts`). The rules now exist in `shared` but aren't wired in. Replace when the server shot flow arrives in milestones 5-6.
+- Bot thinking blocks the server thread: median 79 ms, p95 264 ms, worst 389 ms over 6 bot games. Fine for one game; recheck with many rooms (a worker thread is the likely fix). `MAX_SIMULATED` in `bot.ts` is the cost control.
+- Bot strength is lightly measured: hard beat easy 4 of 6, about 22 shots a game. Not tuned against human play.
+- `npm start` doesn't serve the built client yet, so the game currently runs only under `npm run dev`. Add static serving by milestone 8.
+- The shot clock isn't running yet, so a human can sit on a turn forever. Milestone 6. `Match.expire()` is ready for it.
+- The foul note doesn't say who fouled. Milestone 7.
 - Cosmetic, for milestone 7: pocket facing lines overlap the rail; no portrait layout yet.
 
 ## Session log
@@ -91,3 +97,4 @@ Record constant changes and what prompted them.
 - 2026-11-05: Wrote PROJECT_CONTEXT.md, CLAUDE.md and MEMORY.md. Built milestones 1-2 (this file wasn't updated then).
 - 2026-11-05: Milestone 3. Table, controls, assist and hard preview, ball in hand, pocket calling. Played in headless Chrome over DevTools with real mouse, touch and keyboard input, since the Chrome extension wasn't connected. Not tried on a physical phone.
 - 2026-11-05: Milestone 4. Rules as pure functions in `shared/src/rules.ts`, 48 tests in `game.test.ts`. 17 deliberate rule breaks were all caught by the tests. No browser replay: the only client change is using the shared `freeCueSpot`.
+- 2026-11-05: Milestone 5. `Match` authority class, Socket.IO server, bot, client now server-driven. Played a full game against the hard bot in headless Chrome through the dev server, with no page errors or refused moves. The break issue above is still open and the user hasn't chosen, so bot scoring may need rechecking if the break changes.

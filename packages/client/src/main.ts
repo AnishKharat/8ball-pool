@@ -1,9 +1,10 @@
 import {
-  BALL_R, canPlaceCue, freeCueSpot, MAX_HIT, POCKETS, rackBalls, simulateShot,
-  type BallPos, type ShotIntent, type SimResult,
+  BALL_R, canPlaceCue, currentSeat, groupOf, isOnEight, MAX_HIT, POCKETS,
+  type BallPos, type EndReason, type Foul, type GameState, type Mode, type RoomView, type ShotBroadcast,
 } from '@chalkline/shared';
+import { io } from 'socket.io-client';
 import { buildTracks, sampleTrack, type TrackPoint } from './playback';
-import { aimPreview, type Mode, type Preview } from './preview';
+import { aimPreview, type Preview } from './preview';
 import { drawBall, drawBalls, drawCue, drawPreview, drawTable, fit, toWorld } from './render';
 
 const FINE_STEP = (0.05 * Math.PI) / 180; // about 2 mm of aim across the table's length
@@ -11,87 +12,126 @@ const IDLE_PREVIEW_POWER = 0.5; // before the slider is pulled, a zero-power pre
 const GRAB_RADIUS = 3 * BALL_R; // generous enough for a fingertip
 const POCKET_TAP_RADIUS = 0.1;
 
+const FOUL_TEXT: Record<Foul, string> = {
+  scratch: 'scratch',
+  wrongBall: 'wrong ball first',
+  noContact: 'no contact',
+  noCushion: 'no cushion after contact',
+  offTable: 'ball off the table',
+};
+const END_TEXT: Record<EndReason, string> = {
+  potted8: 'the 8 went in the called pocket',
+  early8: 'the 8 went down early',
+  wrongPocket: 'the 8 went in the wrong pocket',
+  foulOn8: 'the 8 went down on a foul',
+};
+
 const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const canvas = el<HTMLCanvasElement>('table');
 const statusEl = el('status');
+const noteEl = el('note');
+const chooseBar = el('chooseBar');
 const hitPad = el('hit');
 const hitDot = el('hitDot');
 const powerEl = el('power');
 const powerFill = el('powerFill');
 
-interface Playback { result: SimResult; tracks: Map<number, TrackPoint[]>; start: number; gone: Map<number, number> }
+interface Playback { shot: ShotBroadcast; tracks: Map<number, TrackPoint[]>; start: number; gone: Map<number, number> }
 
-let balls: BallPos[] = [];
+const socket = io();
+let game: GameState | null = null;
 let mode: Mode = 'assist';
+let seat = 0;
 let angle = 0;
 let power = 0;
 let hitX = 0;
 let hitY = 0;
-let ballInHand = false;
-let behindHeadString = false;
-let calling = false;
 let called: number | null = null;
 let playback: Playback | null = null;
+let waiting = false; // a shot is on its way to the server
 let draggingCue = false;
 let aiming = false;
 let preview: Preview | null = null;
 let previewKey = '';
 
-function setStatus(text: string) {
-  statusEl.textContent = text;
-}
+const balls = (): BallPos[] => game?.balls ?? [];
+const cueBall = () => balls().find((b) => b.id === 0);
+const myTeam = () => (game ? game.teamOf[seat] : 0);
+const shooting = () => !!game && !playback && !waiting && (game.phase === 'break' || game.phase === 'play') && currentSeat(game) === seat;
+const mustCall = () => shooting() && game!.phase === 'play' && isOnEight(game!, myTeam());
 
-const cueBall = () => balls.find((b) => b.id === 0);
-
-function startRack() {
-  balls = rackBalls();
-  playback = null;
-  ballInHand = true;
-  behindHeadString = true;
-  calling = false;
-  called = null;
-  angle = 0;
+function setGame(next: GameState) {
+  game = next;
   previewKey = '';
-  setStatus('Break: drag the cue ball behind the line if you like, then aim.');
+  renderStatus();
 }
 
-// shortcut: shots simulate in the browser and the bar's buttons stand in for rules, until the server takes over in milestones 4-6.
-function submitShot(shot: ShotIntent) {
-  const result = simulateShot(balls, shot);
+function renderStatus() {
+  chooseBar.hidden = !(game?.phase === 'breakChoice' && !playback && currentSeat(game) === seat);
+  if (!game) return void (statusEl.textContent = 'Choose settings and start a game.');
+  if (playback) return void (statusEl.textContent = '');
+  const group = groupOf(game, myTeam());
+  const yours = group ? ` You have ${group}.` : ' The table is open.';
+  if (game.phase === 'over') {
+    const won = game.winner === myTeam();
+    statusEl.textContent = `${won ? 'You win' : 'You lose'}: ${END_TEXT[game.endReason!]}.`;
+  } else if (currentSeat(game) !== seat) {
+    statusEl.textContent = `The bot is thinking.${yours}`;
+  } else if (game.phase === 'breakChoice') {
+    statusEl.textContent = 'Illegal break. Re-rack and break, or play on?';
+  } else if (game.phase === 'break') {
+    statusEl.textContent = 'Your break. Drag the cue ball behind the line if you like, then aim.';
+  } else if (mustCall() && called === null) {
+    statusEl.textContent = `Your shot, on the 8. Tap a pocket to call it.`;
+  } else {
+    statusEl.textContent = `Your shot.${game.ballInHand ? ' Ball in hand: drag the cue ball anywhere.' : ''}${yours}`;
+  }
+}
+
+function startPlayback(shot: ShotBroadcast) {
   const gone = new Map<number, number>();
-  for (const e of result.events) if (e.type === 'pot' || e.type === 'off') gone.set(e.a, e.t);
-  playback = { result, tracks: buildTracks(balls, result.frames), start: performance.now(), gone };
-  setStatus('');
+  for (const e of shot.events) if (e.type === 'pot' || e.type === 'off') gone.set(e.a, e.t);
+  playback = { shot, tracks: buildTracks(balls(), shot.frames), start: performance.now(), gone };
+  waiting = false;
+  called = null;
+  noteEl.textContent = '';
+  renderStatus();
 }
 
 function finishPlayback(p: Playback) {
-  balls = p.result.balls;
   playback = null;
-  previewKey = '';
-  behindHeadString = false;
-  const eight = p.result.events.find((e) => e.type === 'pot' && e.a === 8);
-  if (eight?.type === 'pot') setStatus(!calling || called === eight.pocket ? '8 potted.' : '8 potted in the wrong pocket.');
-  called = null;
-  if (!cueBall()) {
-    balls = [{ id: 0, ...freeCueSpot(balls) }, ...balls];
-    ballInHand = true;
-    setStatus('Scratch: ball in hand.');
-  }
-  calling = balls.length === 2 && balls.some((b) => b.id === 8);
-  if (calling) setStatus('Tap a pocket to call the 8.');
+  const { fouls } = p.shot.outcome;
+  noteEl.textContent = fouls.length ? `Foul: ${fouls.map((f) => FOUL_TEXT[f]).join(', ')}.` : '';
+  setGame(p.shot.state);
 }
 
+socket.on('state', (v: RoomView) => {
+  mode = v.mode;
+  seat = v.seat;
+  waiting = false;
+  // A state sent during playback describes the table after it, so it replaces what playback will end on.
+  if (playback) playback.shot.state = v.game;
+  else setGame(v.game);
+});
+socket.on('shotResult', startPlayback);
+socket.on('rejected', (reason: string) => {
+  waiting = false;
+  noteEl.textContent = `Refused: ${reason}.`;
+});
+socket.on('disconnect', () => {
+  noteEl.textContent = 'Disconnected from the server.';
+});
+
 function shoot() {
-  if (playback || power <= 0) return;
-  if (calling && called === null) {
-    setStatus('Tap a pocket to call the 8 first.');
-    setPower(0);
-    return;
+  if (!shooting() || power <= 0) return setPower(0);
+  if (mustCall() && called === null) {
+    noteEl.textContent = 'Tap a pocket to call the 8 first.';
+    return setPower(0);
   }
-  const shot = { angle, power, hitX, hitY };
+  // atan2 brings fine-aim drift back into the range the server validates.
+  socket.emit('shot', { angle: Math.atan2(Math.sin(angle), Math.cos(angle)), power, hitX, hitY });
+  waiting = true;
   setPower(0);
-  ballInHand = false;
-  submitShot(shot);
 }
 
 function setPower(p: number) {
@@ -116,12 +156,12 @@ function updatePreview() {
   const key = [mode, angle, p, hitX, hitY, cue.x, cue.y].join();
   if (key === previewKey) return;
   previewKey = key;
-  preview = aimPreview(mode, balls, { angle, power: p, hitX, hitY });
+  preview = aimPreview(mode, balls(), { angle, power: p, hitX, hitY });
 }
 
 function frame(now: number) {
   const v = fit(canvas);
-  drawTable(v, calling && !playback, called);
+  drawTable(v, mustCall(), called);
   if (playback) {
     const t = (now - playback.start) / 1000;
     for (const [id, track] of playback.tracks) {
@@ -130,13 +170,15 @@ function frame(now: number) {
       const pos = sampleTrack(track, t);
       drawBall(v, id, pos.x, pos.y);
     }
-    if (t >= playback.result.duration) finishPlayback(playback);
+    if (t >= playback.shot.duration) finishPlayback(playback);
   } else {
-    updatePreview();
-    drawBalls(v, balls);
-    if (preview) drawPreview(v, preview);
+    drawBalls(v, balls());
     const cue = cueBall();
-    if (cue) drawCue(v, cue, angle, power);
+    if (shooting() && cue) {
+      updatePreview();
+      if (preview) drawPreview(v, preview);
+      drawCue(v, cue, angle, power);
+    }
   }
   requestAnimationFrame(frame);
 }
@@ -152,19 +194,21 @@ function aimAt(x: number, y: number) {
 }
 
 canvas.addEventListener('pointerdown', (e) => {
-  if (playback) return;
+  if (!shooting()) return;
   const p = pointerWorld(e);
   const cue = cueBall();
   canvas.setPointerCapture(e.pointerId);
-  if (calling) {
+  if (mustCall()) {
     const i = POCKETS.findIndex((q) => Math.hypot(q.aimX - p.x, q.aimY - p.y) < POCKET_TAP_RADIUS);
     if (i !== -1) {
       called = i;
-      setStatus('Pocket called. Shoot when ready.');
+      socket.emit('call', { pocket: i });
+      noteEl.textContent = '';
+      statusEl.textContent = 'Pocket called. Shoot when ready.';
       return;
     }
   }
-  if (ballInHand && cue && Math.hypot(p.x - cue.x, p.y - cue.y) < GRAB_RADIUS) {
+  if (game!.ballInHand && cue && Math.hypot(p.x - cue.x, p.y - cue.y) < GRAB_RADIUS) {
     draggingCue = true;
     return;
   }
@@ -175,9 +219,9 @@ canvas.addEventListener('pointerdown', (e) => {
 canvas.addEventListener('pointermove', (e) => {
   const p = pointerWorld(e);
   const cue = cueBall();
-  if (draggingCue && cue) {
+  if (draggingCue && cue && game) {
     // An illegal spot just doesn't take: the ball stays on its last legal one.
-    if (canPlaceCue(balls, p.x, p.y, behindHeadString)) {
+    if (canPlaceCue(balls(), p.x, p.y, game.phase === 'break')) {
       cue.x = p.x;
       cue.y = p.y;
     }
@@ -187,6 +231,8 @@ canvas.addEventListener('pointermove', (e) => {
 });
 
 const endCanvasDrag = () => {
+  const cue = cueBall();
+  if (draggingCue && cue) socket.emit('place', { x: cue.x, y: cue.y });
   draggingCue = false;
   aiming = false;
 };
@@ -207,7 +253,7 @@ hitPad.addEventListener('pointermove', (e) => {
 
 let pullFrom = 0;
 powerEl.addEventListener('pointerdown', (e) => {
-  if (playback) return;
+  if (!shooting()) return;
   powerEl.setPointerCapture(e.pointerId);
   pullFrom = e.clientY;
 });
@@ -245,24 +291,21 @@ window.addEventListener('keydown', (e) => {
   else if (e.key === 'ArrowRight') angle -= FINE_STEP;
 });
 
-el<HTMLSelectElement>('mode').addEventListener('change', (e) => {
-  mode = (e.target as HTMLSelectElement).value as Mode;
-  previewKey = '';
-});
-el('newRack').addEventListener('click', startRack);
-el('giveHand').addEventListener('click', () => {
-  if (playback) return;
-  ballInHand = true;
-  behindHeadString = false;
-  setStatus('Ball in hand: drag the cue ball anywhere.');
-});
-el('callEight').addEventListener('click', () => {
-  if (playback) return;
-  calling = true;
+el('newGame').addEventListener('click', () => {
+  playback = null;
+  waiting = false;
   called = null;
-  setStatus('Tap a pocket to call the 8.');
+  angle = 0;
+  noteEl.textContent = '';
+  setPower(0);
+  socket.emit('startBot', {
+    mode: el<HTMLSelectElement>('mode').value,
+    difficulty: el<HTMLSelectElement>('difficulty').value,
+  });
 });
+el('rerack').addEventListener('click', () => socket.emit('choose', { choice: 'rerack' }));
+el('playOn').addEventListener('click', () => socket.emit('choose', { choice: 'playOn' }));
 
 setHit(0, 0);
-startRack();
+renderStatus();
 requestAnimationFrame(frame);

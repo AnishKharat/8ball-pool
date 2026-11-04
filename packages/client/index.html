@@ -11,7 +11,9 @@
   #stage { flex: 1 1 480px; max-width: 1100px; }
   #table { display: block; width: 100%; touch-action: none; cursor: crosshair; }
   #status { min-height: 1.5em; margin: 8px 0; }
-  #bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  #note { min-height: 1.5em; margin-bottom: 8px; color: #ffd27f; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+  .bar[hidden] { display: none; }
   button, select { font: inherit; padding: 8px 12px; min-height: 40px; background: #2a3138; color: inherit; border: 1px solid #4a535c; border-radius: 6px; }
   aside { display: flex; gap: 16px; align-items: flex-start; }
   .label { font-size: 13px; margin-bottom: 6px; text-align: center; }
@@ -30,11 +32,15 @@
   <div id="stage">
     <canvas id="table" aria-label="Pool table. Drag to aim."></canvas>
     <div id="status" role="status"></div>
-    <div id="bar">
+    <div id="note" role="status"></div>
+    <div id="chooseBar" class="bar" hidden>
+      <button id="rerack">Re-rack and break</button>
+      <button id="playOn">Play on</button>
+    </div>
+    <div class="bar">
       <label>Mode <select id="mode"><option value="assist">Assist</option><option value="hard">Hard</option></select></label>
-      <button id="newRack">New rack</button>
-      <button id="giveHand">Ball in hand</button>
-      <button id="callEight">Call the 8</button>
+      <label>Bot <select id="difficulty"><option value="easy">Easy</option><option value="medium" selected>Medium</option><option value="hard">Hard</option></select></label>
+      <button id="newGame">New game</button>
     </div>
   </div>
   <aside>

@@ -1,9 +1,8 @@
-import { simulateShot, type BallPos, type Keyframe, type ShotIntent } from '@chalkline/shared';
+import { simulateShot, type BallPos, type Keyframe, type Mode, type ShotIntent } from '@chalkline/shared';
 
 const AFTER_CONTACT = 0.5; // seconds of post-contact path to draw
 const MAX_TIME = 6; // a shot that hasn't reached a ball by now shows no ghost
 
-export type Mode = 'assist' | 'hard';
 export interface Point { x: number; y: number }
 export interface Preview { ghost: Point; targetId: number; cuePath: Point[]; targetPath: Point[] }
 
