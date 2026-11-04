@@ -1,0 +1,21 @@
+{
+  "name": "chalkline",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p packages/shared && tsc --noEmit -p packages/server && tsc --noEmit -p packages/client",
+    "build": "npm run build -w @chalkline/client && npm run build -w @chalkline/server",
+    "start": "node packages/server/dist/index.cjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.12"
+  }
+}

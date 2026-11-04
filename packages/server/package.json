@@ -1,0 +1,19 @@
+{
+  "name": "@chalkline/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "esbuild src/index.ts --bundle --platform=node --target=node22 --format=cjs --external:socket.io --outfile=dist/index.cjs"
+  },
+  "dependencies": {
+    "@chalkline/shared": "^0.1.0",
+    "socket.io": "^4.8.4"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.23.15"
+  }
+}
