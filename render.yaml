@@ -1,0 +1,17 @@
+# Render Blueprint: one Docker web service. Rooms live in memory, so keep exactly one instance.
+services:
+  - type: web
+    name: chalkline
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /healthz
+    numInstances: 1
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # ALLOWED_ORIGIN is optional: when unset, the server allows only RENDER_EXTERNAL_URL.
+      # Add it in the Dashboard when you add a custom domain (see DEPLOY_RENDER.md).

@@ -1,6 +1,12 @@
 import { createServer, type IncomingMessage } from 'node:http';
+import path from 'node:path';
 import { Server, type Socket } from 'socket.io';
 import { DEFAULT_ROOM_OPTIONS, RoomManager, type RoomOptions } from './rooms';
+import { httpHandler } from './static';
+
+// The same relative path works from src/ (ESM under tsx) and from the dist/ bundle (CommonJS).
+const HERE = typeof __dirname === 'string' ? __dirname : import.meta.dirname;
+const CLIENT_DIST = path.resolve(HERE, '../../client/dist');
 
 const RATE_BURST = 30; // messages a socket may send at once
 const RATE_PER_SEC = 15; // sustained messages per second; aiming sends nothing, so play stays far below this
@@ -20,15 +26,22 @@ function rateLimit(socket: Socket) {
   });
 }
 
-/** `ALLOWED_ORIGIN` is a comma-separated list. Unset allows any origin, which is fine for local development. */
+/**
+ * `ALLOWED_ORIGIN` is a comma-separated list. On Render it defaults to RENDER_EXTERNAL_URL, the service's own URL.
+ * With neither set, any origin is allowed, which is fine for local development.
+ */
 export function originAllowed(allowed: string | undefined, req: IncomingMessage): boolean {
   if (!allowed) return true;
   const origin = req.headers.origin;
   return !!origin && allowed.split(',').map((o) => o.trim()).includes(origin);
 }
 
-export function createGameServer(options: Partial<RoomOptions> = {}, allowedOrigin = process.env.ALLOWED_ORIGIN) {
-  const http = createServer();
+export function createGameServer(
+  options: Partial<RoomOptions> = {},
+  allowedOrigin = process.env.ALLOWED_ORIGIN || process.env.RENDER_EXTERNAL_URL,
+  clientDist = CLIENT_DIST,
+) {
+  const http = createServer(httpHandler(clientDist));
   // allowRequest covers WebSocket upgrades too, which browsers don't hold to CORS.
   const io = new Server(http, {
     allowRequest: (req, done) => done(null, originAllowed(allowedOrigin, req)),

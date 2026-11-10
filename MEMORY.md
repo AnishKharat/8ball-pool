@@ -62,7 +62,7 @@ Update this at the end of every working session. Keep it short and current. Rewr
 ### 8. Deployment readiness
 - [ ] Dockerfile, `/healthz`, `.env.example`, graceful shutdown
 - [x] Rate limits, origin check, room caps
-- [ ] GitHub Actions CI
+- [x] GitHub Actions CI (written; runs on the first push, not yet seen running)
 - [ ] Host config and README deployment steps
 - [ ] Docker image built and a full match played against it
 
@@ -97,6 +97,10 @@ Update this at the end of every working session. Keep it short and current. Rewr
 | 2026-11-11 | No rematch button and no live view of the opponent's aim | Not asked for; players return to the menu |
 | 2026-11-11 | Bot test seeds its noise | It failed 1 run in 4 and would make CI flaky |
 
+| 2026-11-11 | The client closes its socket on unload (`closeOnBeforeunload`) | Without it a closed tab showed as away only after the 20 to 45 s ping timeout |
+| 2026-11-11 | With `ALLOWED_ORIGIN` unset, the server allows only `RENDER_EXTERNAL_URL` when Render sets it, else any origin | Render works with no configuration; a custom domain needs the variable |
+| 2026-11-11 | Static files, `/healthz` and the SPA fallback are a small `node:http` handler, no Express | Four routes don't justify a dependency |
+
 ## Physics tuning log
 
 Record constant changes and what prompted them.
@@ -108,8 +112,6 @@ Record constant changes and what prompted them.
 - **Weak-looking break (decision needed).** At 95% power the rack barely spreads: median ball moves about 5 cm, though breaks stay legal (about 5.9 balls reach a rail, about 1 pot, 12 trials). Cause measured: sequential pairwise contacts act like a Newton's cradle, so one ball leaves at 8.3 m/s while most stay near 0, and the rails take 51% of the energy (ball impacts 23%, cloth 22%). Restitution 0.95-0.98 and rack gap 0.1-2 mm make no difference, so don't tune those. A real fix means resolving near-simultaneous contacts together, which changes the integration spec.
 - Bot thinking blocks the server thread: median 79 ms, p95 264 ms, worst 389 ms over 6 bot games. Fine for one game; recheck with many rooms (a worker thread is the likely fix). `MAX_SIMULATED` in `bot.ts` is the cost control.
 - Bot strength is lightly measured: hard beat easy 4 of 6, about 22 shots a game. Not tuned against human play.
-- `npm start` doesn't serve the built client yet, so the game currently runs only under `npm run dev`. Add static serving by milestone 8.
-- Under `npm run dev`, a closed tab shows as away only after 20 to 40 s, because Vite's WebSocket proxy doesn't pass the close through and the server waits for the Socket.IO ping timeout. Recheck against `npm start` (no proxy).
 - Ball numbers on a 390 px-wide phone are about 6 CSS px tall: legible on a 3x screen, small. Not checked on a physical phone.
 
 ## Session log

@@ -1,0 +1,12 @@
+**/node_modules
+**/dist
+.git
+.github
+.scratch
+graphify-out
+*.log
+.env
+.env.*
+!.env.example
+Dockerfile
+.dockerignore

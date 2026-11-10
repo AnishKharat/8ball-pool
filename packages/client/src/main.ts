@@ -59,7 +59,8 @@ interface Playback {
   shooter: number; // seat
 }
 
-const socket: Socket<ServerMessages, ClientMessages> = io();
+// Close on unload so the server marks a closed tab away at once, not after the ping timeout.
+const socket: Socket<ServerMessages, ClientMessages> = io({ closeOnBeforeunload: true });
 let room: RoomView | null = null;
 let playerId: string | null = null;
 let game: GameState | null = null;
