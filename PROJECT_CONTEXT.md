@@ -57,6 +57,50 @@ packages/
 - **Aim preview** runs the shared physics on the client and only affects what is drawn.
 - **State:** rooms are held in memory on one instance. No database. A restart ends live matches. Deploy a single instance only.
 
+## Multiplayer architecture
+
+`RoomManager` (`server/src/rooms.ts`) owns every room in memory. A room holds its code, settings (format, mode, bot difficulty), seats, host, a `Match` and the shot timer. Each seat holds a player id, name, team, a live socket id or none, a reconnect token, a ready flag and a `gone` flag. A bot game is a room with the bot in seat 1. Each room is a Socket.IO room named by its code, and every update goes to the whole room.
+
+**Lifecycle**
+
+1. *Lobby.* The creator takes seat 0 and becomes host. Joiners take the first empty seat. Players can switch to an empty seat and toggle ready. The host starts once every seat is filled and every other player is ready. If the host leaves, host passes to the next player in seat order. When the last player leaves, the room is deleted.
+2. *Playing.* `Match` validates and applies every move. After each shot, break choice or expiry, the server sets the shot clock to `max(now, end of playback) + 45 s` and broadcasts the deadline, not ticks. Expiry calls `Match.expire()`.
+3. *Over.* The room stays for 5 minutes so players can read the result, then it is deleted. A sweep every 10 s also deletes any room that has had no connected human for 60 s. Room codes are 6 characters from `crypto.randomInt` over a 29-letter alphabet with no 0/O, 1/I/L or 5/S. The total room count is capped at 500.
+
+**Messages** (types in `shared/src/protocol.ts`)
+
+| Client to server | Payload | Allowed when |
+|---|---|---|
+| `playBot` | name, mode, difficulty | any time (leaves the current room) |
+| `createRoom` | name, mode, format (1v1, 1v2, 2v2) | any time (leaves the current room) |
+| `joinRoom` | name, code | room exists, in lobby, has a free seat |
+| `resume` | code, token | token matches a seat in that room |
+| `leave` | none | in a room |
+| `sit` | seat index | lobby, seat empty |
+| `ready` | boolean | lobby |
+| `start` | none | lobby, host, all seats filled and others ready |
+| `shot` | angle, power, hitX, hitY | playing, your turn or covering |
+| `place` | x, y | ball in hand, your turn |
+| `call` | pocket | on the 8, your turn |
+| `choose` | rerack or playOn | illegal-break choice, your turn |
+
+| Server to client | Payload |
+|---|---|
+| `joined` | code, token, playerId (the client keeps code and token in `sessionStorage`) |
+| `room` | `RoomView`: seats, teams, host, game state, clock `{ deadline, now }` |
+| `shotResult` | keyframes, events, final state, outcome |
+| `rejected` | reason |
+| `left` | reason (room closed, token no longer valid, seat taken over by another tab) |
+
+Every inbound message is rate-limited per socket (token bucket: burst 30, 15 per second). Its payload is schema-checked, and names are stripped of control characters and cut to 20. The server also checks room membership, seat, turn (with cover) and phase. `ALLOWED_ORIGIN` is checked on the handshake, which also covers WebSocket upgrades.
+
+**Reconnect, cover and forfeit**
+
+- On disconnect the seat shows as away and a 60 s grace timer starts. The shot clock keeps running, so an away player's turn can expire as a foul.
+- Within the grace period (or later, while the room exists), `resume` with the token takes the seat back. A second tab resuming the same token takes the seat over.
+- When grace runs out, or a player chooses to leave mid-game, the seat is `gone`. A connected, not-gone teammate may then play that seat's turns (`mayAct` in `protocol.ts`, shared by client and server). In a lobby, an expired seat is simply freed.
+- A team whose every seat is gone forfeits: `phase: 'over'`, the other team wins, `endReason: 'forfeit'`.
+
 ## Physics spec
 
 Simulate each ball as a rigid sphere with 2D position, 2D velocity and full 3D angular velocity. Use SI units. Origin at table centre, x along the length, y across, z up.

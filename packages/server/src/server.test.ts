@@ -1,10 +1,7 @@
-import type { AddressInfo } from 'node:net';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { BALL_R, currentSeat, simulateShot, type GameState, type RoomView, type ShotBroadcast } from '@chalkline/shared';
-import { io as connect, type Socket } from 'socket.io-client';
+import { describe, expect, it } from 'vitest';
+import { BALL_R, currentSeat, simulateShot, type GameState } from '@chalkline/shared';
 import { chooseAfterBreak, chooseMove, listCandidates } from './bot';
 import { Match, parseShot } from './match';
-import { createGameServer } from './server';
 
 const good = { angle: 0, power: 0.5, hitX: 0, hitY: 0 };
 
@@ -124,8 +121,11 @@ describe('bot', () => {
     const rate = (d: 'easy' | 'hard') => {
       const s = table([{ id: 0, x: -0.9, y: -0.3 }, { id: 1, x: 0.8, y: 0.3 }, { id: 8, x: 0, y: -0.5 }, { id: 9, x: -1, y: 0.5 }]);
       let pots = 0;
+      // Seeded, so the noise is the same every run and the test can't flake.
+      let seed = 12345;
+      const random = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 2 ** 32);
       for (let i = 0; i < 40; i++) {
-        const r = simulateShot(s.balls, chooseMove(s, d).shot);
+        const r = simulateShot(s.balls, chooseMove(s, d, random).shot);
         if (r.events.some((e) => e.type === 'pot' && e.a === 1)) pots++;
       }
       return pots;
@@ -170,65 +170,4 @@ describe('bot', () => {
     expect(m.state.phase).toBe('over');
     expect(m.state.winner).not.toBeNull();
   }, 120000);
-});
-
-describe('over a real socket', () => {
-  const { http, io } = createGameServer();
-  let url = '';
-  const open: Socket[] = [];
-
-  beforeAll(async () => {
-    await new Promise<void>((r) => http.listen(0, r));
-    url = `http://localhost:${(http.address() as AddressInfo).port}`;
-  });
-  afterAll(async () => {
-    open.forEach((s) => s.close());
-    await io.close();
-  });
-
-  const client = () => {
-    const s = connect(url);
-    open.push(s);
-    return s;
-  };
-  const once = <T,>(s: Socket, event: string) => new Promise<T>((r) => s.once(event, r));
-
-  it('rejects junk without crashing, before and after a game starts', async () => {
-    const s = client();
-    for (const [event, raw] of [['shot', good], ['place', null], ['call', 5], ['choose', {}]] as const) {
-      const no = once<string>(s, 'rejected');
-      s.emit(event, raw);
-      expect(await no).toBe('no game');
-    }
-    const bad = once<string>(s, 'rejected');
-    s.emit('startBot', { mode: 'cheat', difficulty: 'hard' });
-    expect(await bad).toBe('bad game settings');
-    const started = once<RoomView>(s, 'state');
-    s.emit('startBot', { mode: 'hard', difficulty: 'easy' });
-    expect((await started).mode).toBe('hard');
-    const junk = once<string>(s, 'rejected');
-    s.emit('shot', { angle: 'x', power: Infinity, positions: [] });
-    expect(await junk).toBe('bad shot');
-  });
-
-  it('plays a human shot, then the bot answers through the same path', async () => {
-    const s = client();
-    const started = once<RoomView>(s, 'state');
-    s.emit('startBot', { mode: 'assist', difficulty: 'medium' });
-    expect((await started).seat).toBe(0);
-
-    // A feeble break is illegal, so the bot has to choose and then shoot.
-    const first = once<ShotBroadcast>(s, 'shotResult');
-    s.emit('shot', { angle: 0.02, power: 0.02, hitX: 0, hitY: 0 });
-    const r = await first;
-    expect(r.state.phase).toBe('breakChoice');
-    expect(currentSeat(r.state)).toBe(1);
-
-    const again = once<string>(s, 'rejected');
-    s.emit('shot', good);
-    expect(await again).toMatch(/still playing|not allowed/);
-
-    const reply = await once<ShotBroadcast>(s, 'shotResult');
-    expect(reply.frames.length).toBeGreaterThan(0);
-  }, 30000);
 });

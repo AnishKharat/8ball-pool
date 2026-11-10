@@ -60,7 +60,7 @@ export type Format = 'bot' | '1v1' | '1v2' | '2v2';
 export type Group = 'solids' | 'stripes';
 export type Phase = 'break' | 'breakChoice' | 'play' | 'over';
 export type Foul = 'scratch' | 'wrongBall' | 'noContact' | 'noCushion' | 'offTable';
-export type EndReason = 'potted8' | 'early8' | 'wrongPocket' | 'foulOn8';
+export type EndReason = 'potted8' | 'early8' | 'wrongPocket' | 'foulOn8' | 'forfeit';
 
 export interface GameState {
   /** Seats in shooting order; a seat appears twice when it shoots every team turn. */
@@ -91,6 +91,9 @@ const ROTATIONS: Record<Format, { order: number[]; teamOf: number[] }> = {
   '1v2': { order: [0, 1, 0, 2], teamOf: [0, 1, 1] },
   '2v2': { order: [0, 1, 2, 3], teamOf: [0, 1, 0, 1] },
 };
+
+/** Team (0 or 1) of each seat for a format. */
+export const seatTeams = (format: Format): readonly number[] => ROTATIONS[format].teamOf;
 
 export function newGame(format: Format, random: () => number = Math.random): GameState {
   const { order, teamOf } = ROTATIONS[format];
@@ -217,4 +220,10 @@ export function chooseAfterIllegalBreak(s: GameState, choice: 'rerack' | 'playOn
 export function applyShotClockExpiry(s: GameState): GameState {
   if (s.phase === 'over') return s;
   return { ...s, turn: nextTurn(s), ballInHand: true, phase: s.phase === 'break' ? 'break' : 'play' };
+}
+
+/** A team with nobody left loses. */
+export function forfeit(s: GameState, team: number): GameState {
+  if (s.phase === 'over') return s;
+  return { ...s, phase: 'over', winner: (1 - team) as 0 | 1, endReason: 'forfeit' };
 }

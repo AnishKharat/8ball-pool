@@ -1,9 +1,11 @@
 import {
-  BALL_R, canPlaceCue, currentSeat, groupOf, isOnEight, MAX_HIT, POCKETS,
-  type BallPos, type EndReason, type Foul, type GameState, type Mode, type RoomView, type ShotBroadcast,
+  BALL_R, canPlaceCue, currentSeat, groupOf, isOnEight, mayAct, MAX_HIT, POCKETS, SHOT_CLOCK_MS,
+  type BallPos, type ClientMessages, type EndReason, type Foul, type GameState, type Mode, type RoomFormat, type RoomView,
+  type ServerMessages, type ShotBroadcast,
 } from '@chalkline/shared';
-import { io } from 'socket.io-client';
+import { io, type Socket } from 'socket.io-client';
 import { renderClock, renderTeams, renderTray, type HudSeat } from './hud';
+import { renderLobby, TEAM_NAMES } from './lobby';
 import { buildTracks, sampleTrack, type TrackPoint } from './playback';
 import { aimPreview, type Preview } from './preview';
 import { drawBalls, drawCue, drawPreview, drawTable, layout, newBallLayer, toWorld, type View } from './render';
@@ -16,7 +18,8 @@ const CUE_REST_GAP = 0.012; // tip to ball with no power
 const CUE_PULL = 0.25; // extra draw-back at full power
 const STRIKE_MS = 110;
 const POT_DROP = 0.35; // seconds a potted ball takes to sink
-const CLOCK_MS = 45000;
+const SESSION_KEY = 'chalkline.session';
+const NAME_KEY = 'chalkline.name';
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
 const FOUL_TEXT: Record<Foul, string> = {
@@ -31,6 +34,7 @@ const END_TEXT: Record<EndReason, string> = {
   early8: 'the 8 went down early',
   wrongPocket: 'the 8 went in the wrong pocket',
   foulOn8: 'the 8 went down on a foul',
+  forfeit: 'a team had nobody left at the table',
 };
 
 const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -42,6 +46,8 @@ const hitPad = el('hit');
 const hitDot = el('hitDot');
 const powerEl = el('power');
 const powerFill = el('powerFill');
+const nameInput = el<HTMLInputElement>('name');
+const codeInput = el<HTMLInputElement>('code');
 
 interface Playback {
   shot: ShotBroadcast;
@@ -50,12 +56,15 @@ interface Playback {
   end: number;
   goneAt: Float64Array; // by ball id; Infinity if it stays up
   pocket: Int8Array; // by ball id; -1 unless potted
+  shooter: number; // seat
 }
 
-const socket = io();
+const socket: Socket<ServerMessages, ClientMessages> = io();
+let room: RoomView | null = null;
+let playerId: string | null = null;
 let game: GameState | null = null;
 let mode: Mode = 'assist';
-let seat = 0;
+let seat = -1;
 let angle = 0;
 let power = 0;
 let hitX = 0;
@@ -71,18 +80,84 @@ let view: View | null = null;
 let strike: { angle: number; gap: number; start: number; x: number; y: number } | null = null;
 let potted: number[] = []; // for the tray, in the order they went down
 let deadline: number | null = null; // local clock time the shot clock runs out
+
 const layer = newBallLayer();
 const sample = { x: 0, y: 0 };
-const seats: HudSeat[] = [
-  { name: 'You', team: 0, connected: true, gone: false },
-  { name: 'Bot', team: 1, connected: true, gone: false },
-];
 
 const balls = (): BallPos[] => game?.balls ?? [];
 const cueBall = () => balls().find((b) => b.id === 0);
 const myTeam = () => (game ? game.teamOf[seat] : 0);
-const shooting = () => !!game && !playback && !waiting && (game.phase === 'break' || game.phase === 'play') && currentSeat(game) === seat;
+const shooting = () => !!game && !!room && !playback && !waiting && (game.phase === 'break' || game.phase === 'play') && mayAct(game, room.seats, seat);
 const mustCall = () => shooting() && game!.phase === 'play' && isOnEight(game!, myTeam());
+const seatName = (i: number) => {
+  const p = room?.seats[i];
+  if (!p) return 'Empty seat';
+  return p.bot ? 'The bot' : i === seat ? 'You' : p.name;
+};
+const hudSeats = (): HudSeat[] => (room?.seats ?? []).map((p, i) => ({
+  name: p ? (p.bot ? `Bot \u00b7 ${room!.difficulty}` : p.name) : 'Empty seat',
+  team: room!.teams[i],
+  connected: !!p?.connected,
+  gone: !!p?.gone,
+}));
+
+// ---- storage: sessionStorage holds the seat token per tab; localStorage only remembers the name ----
+
+function saved(): { code: string; token: string } | null {
+  try {
+    return JSON.parse(sessionStorage.getItem(SESSION_KEY) ?? 'null');
+  } catch {
+    return null;
+  }
+}
+function save(session: { code: string; token: string } | null) {
+  try {
+    if (session) sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
+    else sessionStorage.removeItem(SESSION_KEY);
+  } catch {
+    // Storage can be off in private modes; a reload then just can't resume.
+  }
+}
+
+function myName(): string {
+  const name = nameInput.value.trim() || 'Player';
+  try {
+    localStorage.setItem(NAME_KEY, name);
+  } catch {
+    // see save()
+  }
+  return name;
+}
+
+// ---- screens ----
+
+function show(screen: 'menu' | 'lobby' | 'game') {
+  for (const id of ['menu', 'lobby', 'game']) el(id).hidden = id !== screen;
+  if (screen !== 'game') el('overlay').hidden = true;
+}
+
+function resetTable() {
+  game = null;
+  playback = null;
+  waiting = false;
+  strike = null;
+  called = null;
+  potted = [];
+  angle = 0;
+  deadline = null;
+  noteEl.textContent = '';
+  el('overlay').hidden = true;
+  setPower(0);
+}
+
+function toMenu(reason = '') {
+  room = null;
+  save(null);
+  resetTable();
+  show('menu');
+  el('menuNote').textContent = reason;
+  if (location.pathname !== '/') history.replaceState(null, '', '/');
+}
 
 function setGame(next: GameState) {
   game = next;
@@ -91,29 +166,43 @@ function setGame(next: GameState) {
   potted = potted.filter((id) => !up.has(id));
   for (let id = 1; id < 16; id++) if (!up.has(id) && !potted.includes(id)) potted.push(id);
   renderTray(potted);
-  renderTeams(next, seats, seat);
+  renderTeams(next, hudSeats(), seat);
   renderStatus();
+  if (next.phase === 'over') showResult(next);
+}
+
+function showResult(g: GameState) {
+  const won = g.winner === myTeam();
+  const solo = room?.format === 'bot' || room?.format === '1v1';
+  el('overTitle').textContent = won ? 'You win' : 'You lose';
+  const winner = solo ? seatName(g.teamOf.indexOf(g.winner!)) : TEAM_NAMES[g.winner!];
+  el('overText').textContent = `${winner === 'You' ? 'You win' : `${winner} wins`}: ${END_TEXT[g.endReason!]}.`;
+  el('overlay').hidden = false;
+  el('backToMenu').focus();
 }
 
 function renderStatus() {
-  chooseBar.hidden = !(game?.phase === 'breakChoice' && !playback && currentSeat(game) === seat);
-  if (!game) return void (statusEl.textContent = 'Choose settings and start a game.');
+  chooseBar.hidden = !(game?.phase === 'breakChoice' && !playback && room && mayAct(game, room.seats, seat));
+  if (!game) return void (statusEl.textContent = '');
   if (playback) return void (statusEl.textContent = '');
   const group = groupOf(game, myTeam());
   const yours = group ? ` You have ${group}.` : ' The table is open.';
+  const up = currentSeat(game);
+  const cover = up !== seat ? `Covering for ${seatName(up)}. ` : '';
   if (game.phase === 'over') {
     const won = game.winner === myTeam();
     statusEl.textContent = `${won ? 'You win' : 'You lose'}: ${END_TEXT[game.endReason!]}.`;
-  } else if (currentSeat(game) !== seat) {
-    statusEl.textContent = `The bot is thinking.${yours}`;
+  } else if (!room || !mayAct(game, room.seats, seat)) {
+    const p = room?.seats[up];
+    statusEl.textContent = p?.bot ? `The bot is thinking.${yours}` : `${seatName(up)} is up${p && !p.connected ? ' (reconnecting)' : ''}.${yours}`;
   } else if (game.phase === 'breakChoice') {
-    statusEl.textContent = 'Illegal break. Re-rack and break, or play on?';
+    statusEl.textContent = `${cover}Illegal break. Re-rack and break, or play on?`;
   } else if (game.phase === 'break') {
-    statusEl.textContent = 'Your break. Drag the cue ball behind the line if you like, then aim.';
+    statusEl.textContent = `${cover}Your break. Drag the cue ball behind the line if you like, then aim.`;
   } else if (mustCall() && called === null) {
-    statusEl.textContent = `Your shot, on the 8. Tap a pocket to call it.`;
+    statusEl.textContent = `${cover}Your shot, on the 8. Tap a pocket to call it.`;
   } else {
-    statusEl.textContent = `Your shot.${game.ballInHand ? ' Ball in hand: drag the cue ball anywhere.' : ''}${yours}`;
+    statusEl.textContent = `${cover}Your shot.${game.ballInHand ? ' Ball in hand: drag the cue ball anywhere.' : ''}${yours}`;
   }
 }
 
@@ -132,8 +221,8 @@ function startPlayback(shot: ShotBroadcast) {
   const byId = buildTracks(balls(), shot.frames);
   const tracks = Array.from({ length: 16 }, (_, id) => byId.get(id));
   // Let the cue stick finish its strike before the balls move.
-  const start = Math.max(performance.now(), strike && !reducedMotion.matches ? strike.start + STRIKE_MS : 0);
-  playback = { shot, tracks, start, end, goneAt, pocket };
+  const start = Math.max(performance.now(), strike && waiting && !reducedMotion.matches ? strike.start + STRIKE_MS : 0);
+  playback = { shot, tracks, start, end, goneAt, pocket, shooter: game ? currentSeat(game) : -1 };
   waiting = false;
   called = null;
   noteEl.textContent = '';
@@ -142,27 +231,55 @@ function startPlayback(shot: ShotBroadcast) {
 
 function finishPlayback(p: Playback) {
   playback = null;
+  strike = null;
   const { fouls } = p.shot.outcome;
-  noteEl.textContent = fouls.length ? `Foul: ${fouls.map((f) => FOUL_TEXT[f]).join(', ')}.` : '';
+  const who = seatName(p.shooter);
+  noteEl.textContent = fouls.length ? `${who === 'You' ? 'You' : who} fouled: ${fouls.map((f) => FOUL_TEXT[f]).join(', ')}.` : '';
   setGame(p.shot.state);
 }
 
-socket.on('state', (v: RoomView) => {
+function onRoom(v: RoomView) {
+  const fresh = room?.code !== v.code;
+  room = v;
   mode = v.mode;
-  seat = v.seat;
-  waiting = false;
+  seat = v.seats.findIndex((p) => p?.id === playerId);
+  // The server sends its deadline with its own clock reading, so skew between the clocks cancels out.
+  deadline = v.clock ? Date.now() + (v.clock.deadline - v.clock.now) : null;
+  if (!v.game) {
+    if (fresh || game) resetTable();
+    show('lobby');
+    renderLobby(v, playerId, (i) => socket.emit('sit', { seat: i }));
+    return;
+  }
+  show('game');
   // A state sent during playback describes the table after it, so it replaces what playback will end on.
   if (playback) playback.shot.state = v.game;
   else setGame(v.game);
-});
-socket.on('shotResult', startPlayback);
-socket.on('rejected', (reason: string) => {
-  waiting = false;
-  noteEl.textContent = `Refused: ${reason}.`;
+  renderTeams(game, hudSeats(), seat);
+}
+
+socket.on('connect', () => {
+  el('banner').hidden = true;
+  const session = saved();
+  if (session) socket.emit('resume', session);
 });
 socket.on('disconnect', () => {
-  noteEl.textContent = 'Disconnected from the server.';
+  if (room) el('banner').hidden = false;
+  waiting = false;
 });
+socket.on('joined', (j) => {
+  playerId = j.playerId;
+  save({ code: j.code, token: j.token });
+  if (location.pathname !== `/r/${j.code}`) history.replaceState(null, '', `/r/${j.code}`);
+});
+socket.on('room', onRoom);
+socket.on('shotResult', startPlayback);
+socket.on('rejected', (reason) => {
+  waiting = false;
+  const target = !room ? 'menuNote' : room.game ? 'note' : 'lobbyNote';
+  el(target).textContent = `Refused: ${reason}.`;
+});
+socket.on('left', (reason) => toMenu(reason.charAt(0).toUpperCase() + reason.slice(1) + '.'));
 
 function shoot() {
   if (!shooting() || power <= 0) return setPower(0);
@@ -265,7 +382,7 @@ function frame(now: number) {
       drawCue(v, cue, angle, CUE_REST_GAP + power * CUE_PULL, true);
     }
   }
-  renderClock(deadline === null || game?.phase === 'over' ? null : deadline - Date.now(), CLOCK_MS);
+  renderClock(deadline === null || game?.phase === 'over' ? null : Math.min(SHOT_CLOCK_MS, deadline - Date.now()), SHOT_CLOCK_MS);
 }
 
 function pointerWorld(e: PointerEvent) {
@@ -375,30 +492,85 @@ function holdToRepeat(button: HTMLElement, step: () => void) {
 holdToRepeat(el('fineLeft'), () => (angle += FINE_STEP));
 holdToRepeat(el('fineRight'), () => (angle -= FINE_STEP));
 window.addEventListener('keydown', (e) => {
-  if (e.target instanceof HTMLSelectElement || e.target === powerEl) return;
+  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLButtonElement || e.target === powerEl || el('game').hidden) return;
   if (e.key === 'ArrowLeft') angle += FINE_STEP;
   else if (e.key === 'ArrowRight') angle -= FINE_STEP;
 });
 
-el('newGame').addEventListener('click', () => {
-  playback = null;
-  waiting = false;
-  strike = null;
-  called = null;
-  potted = [];
-  angle = 0;
-  noteEl.textContent = '';
-  setPower(0);
-  socket.emit('startBot', {
-    mode: el<HTMLSelectElement>('mode').value,
-    difficulty: el<HTMLSelectElement>('difficulty').value,
-  });
+// ---- menu and lobby ----
+
+const radio = (name: string) => (document.querySelector(`input[name=${name}]:checked`) as HTMLInputElement).value;
+const begin = () => {
+  resetTable();
+  el('menuNote').textContent = '';
+};
+el('playBot').addEventListener('click', () => {
+  begin();
+  socket.emit('playBot', { name: myName(), mode: radio('botMode') as Mode, difficulty: radio('difficulty') as 'easy' });
 });
+el('createRoom').addEventListener('click', () => {
+  begin();
+  socket.emit('createRoom', { name: myName(), mode: radio('roomMode') as Mode, format: radio('format') as RoomFormat });
+});
+const join = () => {
+  const code = codeInput.value.trim().toUpperCase();
+  if (code.length !== 6) return void (el('menuNote').textContent = 'Room codes have 6 characters.');
+  begin();
+  socket.emit('joinRoom', { name: myName(), code });
+};
+el('joinRoom').addEventListener('click', join);
+codeInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') join();
+});
+
+el('readyBtn').addEventListener('click', () => {
+  const me = room?.seats.find((p) => p?.id === playerId);
+  socket.emit('ready', { ready: !me?.ready });
+});
+el('startBtn').addEventListener('click', () => socket.emit('start'));
+el('leaveLobby').addEventListener('click', () => {
+  socket.emit('leave');
+  toMenu();
+});
+el('copyLink').addEventListener('click', async () => {
+  const link = `${location.origin}/r/${room?.code}`;
+  try {
+    await navigator.clipboard.writeText(link);
+    el('copyLink').textContent = 'Copied';
+    setTimeout(() => (el('copyLink').textContent = 'Copy invite link'), 1500);
+  } catch {
+    el('lobbyNote').textContent = `Share this link: ${link}`;
+  }
+});
+
+// Leaving mid-game gives the seat up, so it takes a second tap.
+let leaveArmed = 0;
+el('leaveGame').addEventListener('click', () => {
+  if (game?.phase !== 'over' && !leaveArmed) {
+    el('leaveGame').textContent = 'Tap again to leave';
+    leaveArmed = window.setTimeout(() => {
+      leaveArmed = 0;
+      el('leaveGame').textContent = 'Leave';
+    }, 3000);
+    return;
+  }
+  clearTimeout(leaveArmed);
+  leaveArmed = 0;
+  el('leaveGame').textContent = 'Leave';
+  socket.emit('leave');
+  toMenu();
+});
+el('backToMenu').addEventListener('click', () => {
+  socket.emit('leave');
+  toMenu();
+});
+
 el('rerack').addEventListener('click', () => socket.emit('choose', { choice: 'rerack' }));
 el('playOn').addEventListener('click', () => socket.emit('choose', { choice: 'playOn' }));
 
 const relayout = () => {
-  view = layout(canvas);
+  // A hidden screen measures 0 by 0; keep the last view until it shows again.
+  if (canvas.clientWidth && canvas.clientHeight) view = layout(canvas);
 };
 new ResizeObserver(relayout).observe(canvas);
 // Zooming or moving to another screen changes the pixel ratio without resizing the box.
@@ -408,7 +580,30 @@ const watchDpr = () => matchMedia(`(resolution: ${devicePixelRatio}dppx)`).addEv
 }, { once: true });
 watchDpr();
 
+try {
+  nameInput.value = localStorage.getItem(NAME_KEY) ?? '';
+} catch {
+  // see save()
+}
+// A shared link fills in the code; a tab that already holds a seat resumes it on connect instead.
+const linked = /^\/r\/([A-Za-z0-9]{6})$/.exec(location.pathname);
+if (linked && !saved()) codeInput.value = linked[1].toUpperCase();
+if (!saved()) {
+  show('menu');
+  if (linked) (nameInput.value ? el('joinRoom') : nameInput).focus();
+} else {
+  el('menu').hidden = true;
+}
+
+// Dev builds only: lets a test driver read the table and aim. Production builds drop this block.
+if (import.meta.env.DEV) {
+  Object.assign(window, {
+    chalkline: () => ({
+      game, room, seat, angle, called, shooting: shooting(), mustCall: mustCall(), busy: !!playback || waiting,
+      view: view && { rot: view.rot, ox: view.ox, oy: view.oy, scale: view.scale }, rect: canvas.getBoundingClientRect().toJSON(),
+    }),
+  });
+}
+
 setHit(0, 0);
-renderTeams(null, seats, seat);
-renderStatus();
 requestAnimationFrame(frame);

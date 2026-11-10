@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { BALL_R } from './constants';
 import { simulateShot, type BallPos, type SimEvent } from './physics';
 import {
-  applyShot, applyShotClockExpiry, chooseAfterIllegalBreak, currentSeat, freeCueSpot, groupOf, isOnEight, newGame, placeCue,
+  applyShot, applyShotClockExpiry, chooseAfterIllegalBreak, currentSeat, forfeit, freeCueSpot, groupOf, isOnEight, newGame, placeCue,
   type Foul, type Format, type GameState,
 } from './rules';
 import { HEAD_STRING_X } from './table';
@@ -67,6 +67,13 @@ describe('fouls give the next team ball in hand', () => {
   it('shot clock expiry on the break passes the break on, and in the choice plays on', () => {
     expect(applyShotClockExpiry(newGame('1v1'))).toMatchObject({ phase: 'break', turn: 1, ballInHand: true });
     expect(applyShotClockExpiry({ ...play(), phase: 'breakChoice', turn: 1 })).toMatchObject({ phase: 'play', turn: 0, ballInHand: true });
+  });
+
+  it('a forfeit ends the game for the other team, and a finished game stays finished', () => {
+    expect(forfeit(play(), 0)).toMatchObject({ phase: 'over', winner: 1, endReason: 'forfeit' });
+    expect(forfeit(newGame('2v2'), 1)).toMatchObject({ phase: 'over', winner: 0, endReason: 'forfeit' });
+    const over = forfeit(play(), 1);
+    expect(forfeit(over, 0)).toBe(over);
   });
 });
 

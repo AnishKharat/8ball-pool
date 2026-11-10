@@ -4,9 +4,9 @@ Update this at the end of every working session. Keep it short and current. Rewr
 
 ## Status
 
-**Current milestone:** 6, not started
-**Next step:** Rooms with codes, lobby, seats and teams around the existing `Match` class, replacing the one-game-per-socket shortcut in `packages/server/src/server.ts`.
-**Last updated:** 2026-11-05 (milestones 1-5 done)
+**Current milestone:** 8, deployment readiness
+**Next step:** Serve the built client and /healthz from `npm start`, graceful shutdown, then build the Docker image and play against it.
+**Last updated:** 2026-11-11 (redesign and milestone 6 done)
 
 ## Milestones
 
@@ -49,19 +49,19 @@ Update this at the end of every working session. Keep it short and current. Rewr
 - [x] Reduced motion; frame cost checked at 4x CPU throttle on a 390x844 @3x viewport
 
 ### 6. Multiplayer
-- [ ] Rooms, codes, lobby, seats and teams
-- [ ] Validated shot flow and result broadcast
-- [ ] Shot clock, reconnect, teammate cover, forfeit
-- [ ] 1v1, 1v2 and 2v2 each played through in multiple browser tabs
+- [x] Rooms, codes, lobby, seats and teams
+- [x] Validated shot flow and result broadcast
+- [x] Shot clock, reconnect, teammate cover, forfeit
+- [x] 1v1, 1v2 and 2v2 each played through in multiple browser tabs
 
 ### 7. Polish
 - [ ] Original visual style, sounds from collision events
 - [ ] Responsive layout, mobile check, accessible menus
-- [ ] Error and disconnected states in the UI
+- [x] Error and disconnected states in the UI
 
 ### 8. Deployment readiness
 - [ ] Dockerfile, `/healthz`, `.env.example`, graceful shutdown
-- [ ] Rate limits, origin check, room caps
+- [x] Rate limits, origin check, room caps
 - [ ] GitHub Actions CI
 - [ ] Host config and README deployment steps
 - [ ] Docker image built and a full match played against it
@@ -88,6 +88,15 @@ Update this at the end of every working session. Keep it short and current. Rewr
 | 2026-11-11 | Portrait turns the table 90 degrees, and each ball a quarter turn with it | Numbers stay upright on screen; orientation is visual only |
 | 2026-11-11 | Cloth is teal, rails dark walnut, accents chalk blue and brass | Original look, distinct from Miniclip's green and blue |
 
+| 2026-11-11 | Start needs every seat filled and every non-host player ready; the host's Start counts as ready | The lobby shows ready state, so it should gate the start |
+| 2026-11-11 | Leaving mid-game gives the seat up at once (as if grace ran out); it takes two taps | A deliberate leave shouldn't hold the game for 60 s |
+| 2026-11-11 | A token can resume its seat after the grace period too, while the room exists; a second tab with the same token takes the seat over | Simplest rule; cover and forfeit already handle the gap |
+| 2026-11-11 | Shot clock runs in bot games too | Spec gives one 45 s clock; the bot always shoots in 1 to 2 s |
+| 2026-11-11 | Deadline sent with the server's clock reading; client counts down from the difference | Cancels clock skew without ticks |
+| 2026-11-11 | Rate limit: token bucket per socket, burst 30, 15 per second; names cut to 20 printable characters; room cap 500 | Play sends a few messages per shot, so this only stops floods |
+| 2026-11-11 | No rematch button and no live view of the opponent's aim | Not asked for; players return to the menu |
+| 2026-11-11 | Bot test seeds its noise | It failed 1 run in 4 and would make CI flaky |
+
 ## Physics tuning log
 
 Record constant changes and what prompted them.
@@ -100,9 +109,7 @@ Record constant changes and what prompted them.
 - Bot thinking blocks the server thread: median 79 ms, p95 264 ms, worst 389 ms over 6 bot games. Fine for one game; recheck with many rooms (a worker thread is the likely fix). `MAX_SIMULATED` in `bot.ts` is the cost control.
 - Bot strength is lightly measured: hard beat easy 4 of 6, about 22 shots a game. Not tuned against human play.
 - `npm start` doesn't serve the built client yet, so the game currently runs only under `npm run dev`. Add static serving by milestone 8.
-- The shot clock isn't running yet, so a human can sit on a turn forever. Milestone 6. `Match.expire()` is ready for it.
-- The foul note doesn't say who fouled. Milestone 7.
-- `server.test.ts` "more difficulty pots more of a long cut" is random (40 noisy trials) and failed once in 4 runs. Pre-existing, not touched.
+- Under `npm run dev`, a closed tab shows as away only after 20 to 40 s, because Vite's WebSocket proxy doesn't pass the close through and the server waits for the Socket.IO ping timeout. Recheck against `npm start` (no proxy).
 - Ball numbers on a 390 px-wide phone are about 6 CSS px tall: legible on a 3x screen, small. Not checked on a physical phone.
 
 ## Session log
@@ -111,3 +118,4 @@ Record constant changes and what prompted them.
 - 2026-11-05: Milestone 3. Table, controls, assist and hard preview, ball in hand, pocket calling. Played in headless Chrome over DevTools with real mouse, touch and keyboard input, since the Chrome extension wasn't connected. Not tried on a physical phone.
 - 2026-11-05: Milestone 4. Rules as pure functions in `shared/src/rules.ts`, 48 tests in `game.test.ts`. 17 deliberate rule breaks were all caught by the tests. No browser replay: the only client change is using the shared `freeCueSpot`.
 - 2026-11-05: Milestone 5. `Match` authority class, Socket.IO server, bot, client now server-driven. Played a full game against the hard bot in headless Chrome through the dev server, with no page errors or refused moves. The break issue above is still open and the user hasn't chosen, so bot scoring may need rechecking if the break changes.
+- 2026-11-11: Visual redesign (6a) and milestone 6. Room tests run through real sockets. Played complete matches in headless Chrome over CDP, one window per player: 1v1 (16 shots), 1v2 in Hard mode (16), 2v2 (16) and vs Bot (13). A driver (`.scratch/drive.ts`, not committed) planned shots with the bot's planner and entered them through real pointer drags, arrow keys, the spin pad and the power slider. Each multiplayer match included a page close and rejoin from sessionStorage. Every tab agreed on the table after every shot, and there were no page errors. Chrome extension not connected; no physical phone.
