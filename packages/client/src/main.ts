@@ -259,10 +259,35 @@ function onRoom(v: RoomView) {
   renderTeams(game, hudSeats(), seat);
 }
 
+// A duplicated tab copies sessionStorage, seat token included. Ask the other tabs first so the copy
+// starts at the menu instead of taking the seat from the tab that already holds it.
+const tabs = typeof BroadcastChannel === 'function' ? new BroadcastChannel('chalkline-tabs') : null;
+const tabCheck = new Promise<void>((done) => {
+  const mine = saved();
+  if (!tabs || !mine) return done();
+  const onReply = (e: MessageEvent) => {
+    if (e.data !== `taken:${mine.token}`) return;
+    save(null);
+    done();
+  };
+  tabs.addEventListener('message', onReply);
+  tabs.postMessage(`claim:${mine.token}`);
+  setTimeout(() => {
+    tabs.removeEventListener('message', onReply);
+    done();
+  }, 250);
+});
+tabs?.addEventListener('message', (e) => {
+  const s = saved();
+  if (s && e.data === `claim:${s.token}`) tabs.postMessage(`taken:${s.token}`);
+});
+
 socket.on('connect', () => {
   el('banner').hidden = true;
-  const session = saved();
-  if (session) socket.emit('resume', session);
+  void tabCheck.then(() => {
+    const session = saved();
+    if (session) socket.emit('resume', session);
+  });
 });
 socket.on('disconnect', () => {
   if (room) el('banner').hidden = false;
@@ -587,6 +612,7 @@ try {
   // see save()
 }
 // A shared link fills in the code; a tab that already holds a seat resumes it on connect instead.
+await tabCheck;
 const linked = /^\/r\/([A-Za-z0-9]{6})$/.exec(location.pathname);
 if (linked && !saved()) codeInput.value = linked[1].toUpperCase();
 if (!saved()) {
