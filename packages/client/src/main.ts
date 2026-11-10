@@ -526,23 +526,22 @@ window.addEventListener('keydown', (e) => {
 // ---- menu and lobby ----
 
 const radio = (name: string) => (document.querySelector(`input[name=${name}]:checked`) as HTMLInputElement).value;
+// Socket.IO would queue the emit until it connects, so without this a dead connection looks like a dead button.
 const begin = () => {
-  resetTable();
-  el('menuNote').textContent = '';
+  el('menuNote').textContent = socket.connected ? '' : "Can't reach the server. Retrying…";
+  if (socket.connected) resetTable();
+  return socket.connected;
 };
 el('playBot').addEventListener('click', () => {
-  begin();
-  socket.emit('playBot', { name: myName(), mode: radio('botMode') as Mode, difficulty: radio('difficulty') as 'easy' });
+  if (begin()) socket.emit('playBot', { name: myName(), mode: radio('botMode') as Mode, difficulty: radio('difficulty') as 'easy' });
 });
 el('createRoom').addEventListener('click', () => {
-  begin();
-  socket.emit('createRoom', { name: myName(), mode: radio('roomMode') as Mode, format: radio('format') as RoomFormat });
+  if (begin()) socket.emit('createRoom', { name: myName(), mode: radio('roomMode') as Mode, format: radio('format') as RoomFormat });
 });
 const join = () => {
   const code = codeInput.value.trim().toUpperCase();
   if (code.length !== 6) return void (el('menuNote').textContent = 'Room codes have 6 characters.');
-  begin();
-  socket.emit('joinRoom', { name: myName(), code });
+  if (begin()) socket.emit('joinRoom', { name: myName(), code });
 };
 el('joinRoom').addEventListener('click', join);
 codeInput.addEventListener('keydown', (e) => {

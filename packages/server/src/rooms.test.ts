@@ -105,7 +105,8 @@ describe('input parsing', () => {
     expect(originAllowed(undefined, req('http://evil.test'))).toBe(true);
     expect(originAllowed('https://a.test, https://b.test', req('https://b.test'))).toBe(true);
     expect(originAllowed('https://a.test', req('https://evil.test'))).toBe(false);
-    expect(originAllowed('https://a.test', req())).toBe(false);
+    // Same-origin polling GETs carry no Origin; rejecting them broke every deployed game.
+    expect(originAllowed('https://a.test', req())).toBe(true);
   });
 });
 

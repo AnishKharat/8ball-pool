@@ -33,7 +33,9 @@ function rateLimit(socket: Socket) {
 export function originAllowed(allowed: string | undefined, req: IncomingMessage): boolean {
   if (!allowed) return true;
   const origin = req.headers.origin;
-  return !!origin && allowed.split(',').map((o) => o.trim()).includes(origin);
+  // Browsers leave Origin off same-origin GETs (Socket.IO's first polling request) but always send it
+  // cross-site and on WebSocket upgrades, so a missing Origin is never another site's page.
+  return !origin || allowed.split(',').map((o) => o.trim()).includes(origin);
 }
 
 export function createGameServer(
