@@ -9,7 +9,7 @@ export const HALF_W = TABLE_W / 2;
 export const G = 9.81;
 
 export const MU_SLIDE = 0.2;
-export const MU_ROLL = 0.01;
+export const MU_ROLL = 0.014;
 export const MU_SPIN = 0.044;
 export const BALL_E = 0.95;
 export const BALL_MU = 0.06;

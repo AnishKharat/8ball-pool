@@ -66,6 +66,13 @@ Update this at the end of every working session. Keep it short and current. Rewr
 - [ ] Host config and README deployment steps
 - [ ] Docker image built and a full match played against it
 
+### 9. Free-for-all, cloth friction, mobile aiming
+- [x] Cloth friction: `MU_ROLL` 0.01 to 0.014, roll, break and bot games remeasured
+- [ ] Mobile aiming: relative touch aim, one finger, lift jitter ignored, pull-the-stick power, slider locks aim
+- [ ] Free-for-all rules (1v1v1, 1v1v1v1, 21 balls) as pure functions with tests
+- [ ] Free-for-all rooms, lobby seats, scoreboard HUD, 21-ball look
+- [ ] Full 1v1v1 and 1v1v1v1 matches played in browser windows, with a close and rejoin
+
 ## Decisions
 
 | Date | Decision | Why |
@@ -107,11 +114,19 @@ Update this at the end of every working session. Keep it short and current. Rewr
 
 Record constant changes and what prompted them.
 
-(none yet)
+- 2026-11-11: `MU_ROLL` 0.01 to 0.014 (user: shots roll too far). `MU_SLIDE` and `MU_SPIN` unchanged. Cue ball alone, centre hit, from the head string down the table; distance is path length to rest, including rail bounces (`.scratch/friction.ts`):
+
+  | Power (cue speed) | Before | After |
+  |---|---|---|
+  | 25% (2.1 m/s) | 4.99 m, 2 cushions, 7.0 s | 4.68 m, 2 cushions, 5.8 s |
+  | 50% (3.9 m/s) | 7.90 m, 3 cushions, 8.1 s | 7.45 m, 3 cushions, 6.6 s |
+  | 100% (7.5 m/s) | 10.79 m, 4 cushions, 8.7 s | 10.24 m, 4 cushions, 7.0 s |
+
+  Distance falls only 5 to 6% because the cushions take most of the energy, but shots settle 1.2 to 1.7 s sooner. Break (40 bot breaks): rail balls 5.0 to 5.0, pots 0.85 to 0.88, all legal both times, median ball moved 6.2 to 4.3 cm. Bot games (8, hard vs easy): hard won 7 to 8 of 8, 23.0 to 21.6 shots a game.
 
 ## Known issues
 
-- **Weak-looking break (decision needed).** At 95% power the rack barely spreads: median ball moves about 5 cm, though breaks stay legal (about 5.9 balls reach a rail, about 1 pot, 12 trials). Cause measured: sequential pairwise contacts act like a Newton's cradle, so one ball leaves at 8.3 m/s while most stay near 0, and the rails take 51% of the energy (ball impacts 23%, cloth 22%). Restitution 0.95-0.98 and rack gap 0.1-2 mm make no difference, so don't tune those. A real fix means resolving near-simultaneous contacts together, which changes the integration spec.
+- **Weak-looking break (decision needed).** At full power the rack barely spreads. With `MU_ROLL` 0.014 (40 bot breaks): median ball moves 4.3 cm (6.2 cm at 0.01), 5.0 balls reach a rail, 0.88 pots a break, every break legal. Cause measured: sequential pairwise contacts act like a Newton's cradle, so one ball leaves at 8.3 m/s while most stay near 0, and the rails take 51% of the energy (ball impacts 23%, cloth 22%). Restitution 0.95-0.98 and rack gap 0.1-2 mm make no difference, so don't tune those. A real fix means resolving near-simultaneous contacts together, which changes the integration spec.
 - Bot thinking blocks the server thread: median 79 ms, p95 264 ms, worst 389 ms over 6 bot games. Fine for one game; recheck with many rooms (a worker thread is the likely fix). `MAX_SIMULATED` in `bot.ts` is the cost control.
 - Bot strength is lightly measured: hard beat easy 4 of 6, about 22 shots a game. Not tuned against human play.
 - Ball numbers on a 390 px-wide phone are about 6 CSS px tall: legible on a 3x screen, small. Not checked on a physical phone.
