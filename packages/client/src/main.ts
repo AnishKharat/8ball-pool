@@ -6,6 +6,7 @@ import {
 import { io, type Socket } from 'socket.io-client';
 import { renderClock, renderTeams, renderTray, type HudSeat } from './hud';
 import { renderLobby, TEAM_NAMES } from './lobby';
+import { onStick, TouchGesture } from './gesture';
 import { buildTracks, sampleTrack, type TrackPoint } from './playback';
 import { aimPreview, type Preview } from './preview';
 import { drawBalls, drawCue, drawPreview, drawTable, layout, newBallLayer, toWorld, type View } from './render';
@@ -17,6 +18,9 @@ const POCKET_TAP_RADIUS = 0.1;
 const CUE_REST_GAP = 0.012; // tip to ball with no power
 const CUE_PULL = 0.25; // extra draw-back at full power
 const STRIKE_MS = 110;
+const PULL_PX = 120; // CSS px of drag back along the stick for full power
+const STICK_TOUCH_PX = 24; // half-width of the stick's touch zone: a fingertip, not the drawn 3-8 px
+const SHOOT_BUZZ_MS = 15;
 const POT_DROP = 0.35; // seconds a potted ball takes to sink
 const SESSION_KEY = 'chalkline.session';
 const NAME_KEY = 'chalkline.name';
@@ -74,7 +78,13 @@ let called: number | null = null;
 let playback: Playback | null = null;
 let waiting = false; // a shot is on its way to the server
 let draggingCue = false;
-let aiming = false;
+let dragId = -1;
+let aiming = false; // mouse only; touch aims through `touchAim`
+const touchAim = new TouchGesture();
+let sliderHeld = false;
+/** Pulling the stick or holding the power slider fixes the aim until release. */
+const aimLocked = () => sliderHeld || touchAim.kind === 'pull';
+const aimLog: { at: string; angle: number }[] = []; // dev builds only, for the touch test driver
 let preview: Preview | null = null;
 let previewKey = '';
 let view: View | null = null;
@@ -315,6 +325,8 @@ function shoot() {
   }
   // atan2 brings fine-aim drift back into the range the server validates.
   socket.emit('shot', { angle: Math.atan2(Math.sin(angle), Math.cos(angle)), power, hitX, hitY });
+  if (import.meta.env.DEV) aimLog.push({ at: 'send', angle });
+  if ('vibrate' in navigator) navigator.vibrate(SHOOT_BUZZ_MS);
   waiting = true;
   const cue = cueBall()!;
   strike = { angle, gap: CUE_REST_GAP + power * CUE_PULL, start: performance.now(), x: cue.x, y: cue.y };
@@ -423,6 +435,9 @@ function aimAt(x: number, y: number) {
 
 canvas.addEventListener('pointerdown', (e) => {
   if (!shooting() || !view) return;
+  const touch = e.pointerType === 'touch';
+  // Only the first finger counts, and a held power slider keeps the aim where it is.
+  if (touch && (touchAim.active || draggingCue || sliderHeld)) return;
   const p = pointerWorld(e);
   const cue = cueBall();
   canvas.setPointerCapture(e.pointerId);
@@ -438,6 +453,13 @@ canvas.addEventListener('pointerdown', (e) => {
   }
   if (game!.ballInHand && cue && Math.hypot(p.x - cue.x, p.y - cue.y) < GRAB_RADIUS) {
     draggingCue = true;
+    dragId = e.pointerId;
+    return;
+  }
+  if (touch && cue) {
+    const kind = onStick(p, cue, angle, STICK_TOUCH_PX / view.scale) ? 'pull' : 'aim';
+    touchAim.down(e.pointerId, kind, p, e.timeStamp, angle, cue);
+    if (import.meta.env.DEV && kind === 'pull') aimLog.push({ at: 'pull', angle });
     return;
   }
   aiming = true;
@@ -448,25 +470,38 @@ canvas.addEventListener('pointermove', (e) => {
   if (!view) return;
   const p = pointerWorld(e);
   const cue = cueBall();
-  if (draggingCue && cue && game) {
+  if (draggingCue) {
     // An illegal spot just doesn't take: the ball stays on its last legal one.
-    if (canPlaceCue(balls(), p.x, p.y, game.phase === 'break')) {
+    if (e.pointerId === dragId && cue && game && canPlaceCue(balls(), p.x, p.y, game.phase === 'break')) {
       cue.x = p.x;
       cue.y = p.y;
     }
+  } else if (cue && touchAim.move(e.pointerId, p, e.timeStamp, cue, PULL_PX / view.scale)) {
+    angle = touchAim.angle;
+    if (touchAim.kind === 'pull') setPower(touchAim.power);
   } else if (aiming) {
     aimAt(p.x, p.y);
   }
 });
 
-const endCanvasDrag = () => {
+function endCanvasPointer(e: PointerEvent) {
   const cue = cueBall();
-  if (draggingCue && cue) socket.emit('place', { x: cue.x, y: cue.y });
-  draggingCue = false;
-  aiming = false;
-};
-canvas.addEventListener('pointerup', endCanvasDrag);
-canvas.addEventListener('pointercancel', endCanvasDrag);
+  if (draggingCue && e.pointerId === dragId) {
+    if (cue) socket.emit('place', { x: cue.x, y: cue.y });
+    draggingCue = false;
+  }
+  const pull = touchAim.kind === 'pull';
+  const r = e.type === 'pointerup' ? touchAim.up(e.pointerId, e.timeStamp) : touchAim.cancel(e.pointerId);
+  if (r) {
+    angle = r.angle;
+    if (pull) setPower(r.power);
+    if (r.shoot) shoot();
+    else if (pull) setPower(0);
+  }
+  if (e.pointerType !== 'touch') aiming = false;
+}
+canvas.addEventListener('pointerup', endCanvasPointer);
+canvas.addEventListener('pointercancel', endCanvasPointer);
 
 function moveHit(e: PointerEvent) {
   const r = hitPad.getBoundingClientRect();
@@ -484,7 +519,8 @@ hitPad.addEventListener('pointermove', (e) => {
 const powerFlat = () => powerEl.clientWidth > powerEl.clientHeight;
 let pullFrom = 0;
 powerEl.addEventListener('pointerdown', (e) => {
-  if (!shooting()) return;
+  if (!shooting() || sliderHeld || touchAim.active) return;
+  sliderHeld = true;
   powerEl.setPointerCapture(e.pointerId);
   pullFrom = powerFlat() ? e.clientX : e.clientY;
 });
@@ -492,8 +528,15 @@ powerEl.addEventListener('pointermove', (e) => {
   if (!powerEl.hasPointerCapture(e.pointerId)) return;
   setPower(powerFlat() ? (e.clientX - pullFrom) / powerEl.clientWidth : (e.clientY - pullFrom) / powerEl.clientHeight);
 });
-powerEl.addEventListener('pointerup', shoot);
-powerEl.addEventListener('pointercancel', () => setPower(0));
+powerEl.addEventListener('pointerup', (e) => {
+  if (!powerEl.hasPointerCapture(e.pointerId)) return;
+  sliderHeld = false;
+  shoot();
+});
+powerEl.addEventListener('pointercancel', () => {
+  sliderHeld = false;
+  setPower(0);
+});
 powerEl.addEventListener('keydown', (e) => {
   if (e.key === 'ArrowDown' || e.key === 'ArrowRight') setPower(power + 0.02);
   else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') setPower(power - 0.02);
@@ -515,10 +558,11 @@ function holdToRepeat(button: HTMLElement, step: () => void) {
     if (e.detail === 0) step();
   });
 }
-holdToRepeat(el('fineLeft'), () => (angle += FINE_STEP));
-holdToRepeat(el('fineRight'), () => (angle -= FINE_STEP));
+holdToRepeat(el('fineLeft'), () => aimLocked() || (angle += FINE_STEP));
+holdToRepeat(el('fineRight'), () => aimLocked() || (angle -= FINE_STEP));
 window.addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLInputElement || e.target instanceof HTMLButtonElement || e.target === powerEl || el('game').hidden) return;
+  if (aimLocked()) return;
   if (e.key === 'ArrowLeft') angle += FINE_STEP;
   else if (e.key === 'ArrowRight') angle -= FINE_STEP;
 });
@@ -593,6 +637,11 @@ el('backToMenu').addEventListener('click', () => {
 el('rerack').addEventListener('click', () => socket.emit('choose', { choice: 'rerack' }));
 el('playOn').addEventListener('click', () => socket.emit('choose', { choice: 'playOn' }));
 
+// Safari zooms on its own gesture events regardless of touch-action, so stop them while a game is on screen.
+document.addEventListener('gesturestart', (e) => {
+  if (!el('game').hidden) e.preventDefault();
+});
+
 const relayout = () => {
   // A hidden screen measures 0 by 0; keep the last view until it shows again.
   if (canvas.clientWidth && canvas.clientHeight) view = layout(canvas);
@@ -625,7 +674,7 @@ if (!saved()) {
 if (import.meta.env.DEV) {
   Object.assign(window, {
     chalkline: () => ({
-      game, room, seat, angle, called, shooting: shooting(), mustCall: mustCall(), busy: !!playback || waiting,
+      game, room, seat, angle, called, power, aimLog, shooting: shooting(), mustCall: mustCall(), busy: !!playback || waiting,
       view: view && { rot: view.rot, ox: view.ox, oy: view.oy, scale: view.scale }, rect: canvas.getBoundingClientRect().toJSON(),
     }),
   });

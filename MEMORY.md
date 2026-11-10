@@ -68,7 +68,7 @@ Update this at the end of every working session. Keep it short and current. Rewr
 
 ### 9. Free-for-all, cloth friction, mobile aiming
 - [x] Cloth friction: `MU_ROLL` 0.01 to 0.014, roll, break and bot games remeasured
-- [ ] Mobile aiming: relative touch aim, one finger, lift jitter ignored, pull-the-stick power, slider locks aim
+- [x] Mobile aiming: relative touch aim, one finger, lift jitter ignored, pull-the-stick power, slider locks aim
 - [ ] Free-for-all rules (1v1v1, 1v1v1v1, 21 balls) as pure functions with tests
 - [ ] Free-for-all rooms, lobby seats, scoreboard HUD, 21-ball look
 - [ ] Full 1v1v1 and 1v1v1v1 matches played in browser windows, with a close and rejoin
@@ -77,6 +77,10 @@ Update this at the end of every working session. Keep it short and current. Rewr
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-11-11 | Touch aim turns by 0.4 of the finger's turn around the cue ball, and ignores the finger within 6 cm of the ball | Relative and finer than pointing; near the ball the finger's angle swings wildly |
+| 2026-11-11 | A touch within 24 CSS px of the stick's axis, from the ball to 1.6 m behind it, pulls; 120 px of pull is full power; under 3% cancels | The drawn stick is 3 to 8 px wide, too thin for a fingertip; 120 px fits a landscape phone |
+| 2026-11-11 | Fine-aim buttons and arrow keys do nothing while the stick is pulled or the slider held | "The slider locks the aim" applies to every aim input |
+| 2026-11-11 | Mouse keeps point-to-aim; only `pointerType === 'touch'` uses the gesture | Spec: keep mouse behaviour as it is. Pens count as mouse. |
 | 2026-11-11 | Assist shows the ghost ball and only 0.2 m of the target ball's direction; the cue ball path after contact is gone | User asked for less assist. Spec table in PROJECT_CONTEXT.md updated to match. |
 | 2026-11-11 | A socket handshake with no Origin header is allowed even when ALLOWED_ORIGIN is set | Browsers omit Origin on same-origin GETs, so the deployed game refused every player. Cross-site pages and WebSocket upgrades always send it. |
 | 2026-11-05 | The server sends shot keyframes; clients don't simulate results | Avoids divergence between JS engines |
@@ -125,6 +129,9 @@ Record constant changes and what prompted them.
   Distance falls only 5 to 6% because the cushions take most of the energy, but shots settle 1.2 to 1.7 s sooner. Break (40 bot breaks): rail balls 5.0 to 5.0, pots 0.85 to 0.88, all legal both times, median ball moved 6.2 to 4.3 cm. Bot games (8, hard vs easy): hard won 7 to 8 of 8, 23.0 to 21.6 shots a game.
 
 ## Known issues
+
+- Touch aiming is verified only with Chrome's touch emulation (CDP touch events), not on a physical phone. Nothing tells a new player that dragging the stick back shoots; the slider still works.
+- `navigator.vibrate` doesn't exist on iOS Safari, so iPhones get no buzz; Safari also needed a `gesturestart` block for pinch zoom, which is untested.
 
 - **Weak-looking break (decision needed).** At full power the rack barely spreads. With `MU_ROLL` 0.014 (40 bot breaks): median ball moves 4.3 cm (6.2 cm at 0.01), 5.0 balls reach a rail, 0.88 pots a break, every break legal. Cause measured: sequential pairwise contacts act like a Newton's cradle, so one ball leaves at 8.3 m/s while most stay near 0, and the rails take 51% of the energy (ball impacts 23%, cloth 22%). Restitution 0.95-0.98 and rack gap 0.1-2 mm make no difference, so don't tune those. A real fix means resolving near-simultaneous contacts together, which changes the integration spec.
 - Bot thinking blocks the server thread: median 79 ms, p95 264 ms, worst 389 ms over 6 bot games. Fine for one game; recheck with many rooms (a worker thread is the likely fix). `MAX_SIMULATED` in `bot.ts` is the cost control.
