@@ -2,63 +2,183 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0e1316">
 <title>Chalkline</title>
 <style>
+  :root {
+    --bg: #0e1316; --panel: #161e22; --panel-2: #1d282d; --line: #2c3a40; --text: #e9e6dc; --muted: #93a2a6;
+    --chalk: #7cc6e8; --brass: #d9a441; --warn: #ffb35c; --ok: #6fd39a; --bad: #ef6f5e;
+    --gut: 12px;
+  }
   * { box-sizing: border-box; }
-  body { margin: 0; background: #14181d; color: #e8e6df; font: 15px system-ui, sans-serif; }
-  main { display: flex; flex-wrap: wrap; gap: 16px; padding: 12px; justify-content: center; }
-  #stage { flex: 1 1 480px; max-width: 1100px; }
-  #table { display: block; width: 100%; touch-action: none; cursor: crosshair; }
-  #status { min-height: 1.5em; margin: 8px 0; }
-  #note { min-height: 1.5em; margin-bottom: 8px; color: #ffd27f; }
-  .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
-  .bar[hidden] { display: none; }
-  button, select { font: inherit; padding: 8px 12px; min-height: 40px; background: #2a3138; color: inherit; border: 1px solid #4a535c; border-radius: 6px; }
-  aside { display: flex; gap: 16px; align-items: flex-start; }
-  .label { font-size: 13px; margin-bottom: 6px; text-align: center; }
-  #hit { position: relative; width: 120px; height: 120px; border-radius: 50%; background: #f4f1e6; touch-action: none; cursor: pointer; }
-  #hitLimit { position: absolute; inset: 25%; border: 1px dashed #8a8778; border-radius: 50%; pointer-events: none; }
-  #hitDot { position: absolute; width: 14px; height: 14px; margin: -7px; border-radius: 50%; background: #c8321e; pointer-events: none; }
-  #fine { display: flex; gap: 8px; justify-content: center; }
-  #fine button { touch-action: none; min-width: 52px; }
-  #power { position: relative; width: 44px; height: 220px; background: #2a3138; border: 1px solid #4a535c; border-radius: 6px; touch-action: none; cursor: grab; overflow: hidden; }
-  #powerFill { position: absolute; left: 0; right: 0; top: 0; height: 0; background: linear-gradient(#e0b040, #c8321e); }
-  :focus-visible { outline: 2px solid #7fd0ff; outline-offset: 2px; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: radial-gradient(120% 80% at 50% 0%, #17252b 0%, var(--bg) 60%); color: var(--text);
+    font: 15px/1.35 system-ui, -apple-system, "Segoe UI", sans-serif; overflow: hidden;
+  }
+  button, select, input { font: inherit; color: inherit; }
+  button, select {
+    min-height: 40px; padding: 8px 14px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; cursor: pointer;
+  }
+  button:hover:not(:disabled) { border-color: #45585f; }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: var(--chalk); color: #0b1a22; border-color: var(--chalk); font-weight: 650; }
+  :focus-visible { outline: 2px solid var(--chalk); outline-offset: 2px; }
+  [hidden] { display: none !important; }
+
+  #game {
+    height: 100dvh; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 6px;
+    padding: max(8px, env(safe-area-inset-top)) max(var(--gut), env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(var(--gut), env(safe-area-inset-left));
+  }
+
+  /* HUD: two team cards with the turn and shot clock between them. */
+  .hud { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 10px; align-items: stretch; }
+  .team { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 6px 10px; min-width: 0; display: flex; gap: 10px; align-items: center; justify-content: space-between; transition: border-color .2s, box-shadow .2s; }
+  .team.r { flex-direction: row-reverse; }
+  .team.active { border-color: var(--chalk); box-shadow: 0 0 0 1px var(--chalk), 0 0 18px rgba(124,198,232,.18); }
+  .players { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  .team.r .players { align-items: flex-end; }
+  .pl { display: flex; gap: 6px; align-items: center; min-width: 0; font-weight: 600; white-space: nowrap; }
+  .pl span { overflow: hidden; text-overflow: ellipsis; }
+  .pl.up { color: var(--chalk); }
+  .pl.up::before { content: "\25B8"; }
+  .pl.off { color: var(--muted); font-weight: 400; }
+  .pl.off::after { content: "away"; font-size: 11px; border: 1px solid var(--line); border-radius: 6px; padding: 0 4px; }
+  .grp { display: flex; flex-direction: column; gap: 3px; align-items: flex-end; min-width: 0; }
+  .team.r .grp { align-items: flex-start; }
+  .glabel { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+  .chips { display: flex; gap: 2px; flex-wrap: wrap; }
+  .turn { display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 64px; }
+  .clock { position: relative; width: 44px; height: 44px; }
+  .clock svg { position: absolute; inset: 0; transform: rotate(-90deg); }
+  .clock circle { fill: none; stroke-width: 4; }
+  .clock .track { stroke: var(--line); }
+  .clock .arc { stroke: var(--chalk); stroke-linecap: round; transition: stroke .3s; }
+  .clock.low .arc { stroke: var(--bad); }
+  .clock b { position: absolute; inset: 0; display: grid; place-items: center; font-size: 14px; font-variant-numeric: tabular-nums; }
+
+  /* Mini balls: stripes show a white cap pattern, so the two groups differ by more than colour. */
+  .chip {
+    --c: #888; width: 18px; height: 18px; border-radius: 50%; flex: none; display: grid; place-items: center;
+    font: 700 9px/1 system-ui, sans-serif; color: #15171a; background: var(--c);
+    box-shadow: inset -2px -3px 4px rgba(0,0,0,.35), inset 2px 2px 3px rgba(255,255,255,.35);
+  }
+  .chip.st { background: linear-gradient(#f4efe2 0 24%, var(--c) 24% 76%, #f4efe2 76%); }
+  .chip i { font-style: normal; width: 11px; height: 11px; border-radius: 50%; background: #f4efe2; display: grid; place-items: center; }
+  .chip.gone { opacity: .22; }
+
+  .arena { min-height: 0; display: grid; gap: 10px; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "hit table power"; align-items: center; }
+  .tableWrap { grid-area: table; position: relative; width: 100%; height: 100%; min-width: 0; min-height: 0; }
+  #table { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; cursor: crosshair; }
+  .ctl { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .ctl.hit { grid-area: hit; }
+  .ctl.pow { grid-area: power; height: 100%; justify-content: center; }
+  .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; text-align: center; }
+  #hit {
+    position: relative; width: 104px; height: 104px; border-radius: 50%; touch-action: none; cursor: pointer;
+    background: radial-gradient(circle at 36% 30%, #fffdf6 0%, #ece7d8 45%, #b3ad9c 100%);
+    box-shadow: 0 4px 14px rgba(0,0,0,.5);
+  }
+  #hit::before, #hit::after { content: ""; position: absolute; background: rgba(0,0,0,.12); }
+  #hit::before { left: 50%; top: 8%; bottom: 8%; width: 1px; }
+  #hit::after { top: 50%; left: 8%; right: 8%; height: 1px; }
+  #hitLimit { position: absolute; inset: 25%; border: 1px dashed rgba(0,0,0,.3); border-radius: 50%; pointer-events: none; }
+  #hitDot { position: absolute; width: 14px; height: 14px; margin: -7px; border-radius: 50%; background: #3d7fb0; box-shadow: 0 0 0 2px #fff, 0 1px 3px rgba(0,0,0,.5); pointer-events: none; }
+  .fine { display: flex; gap: 8px; }
+  .fine button { touch-action: none; min-width: 48px; }
+  #power {
+    position: relative; width: 52px; height: min(300px, 70%); min-height: 120px; border-radius: 26px; touch-action: none; cursor: grab; overflow: hidden;
+    background: linear-gradient(90deg, #11181b, #1f2a2f 50%, #11181b); border: 1px solid var(--line);
+  }
+  #powerFill {
+    position: absolute; left: 0; right: 0; top: 0; height: calc(var(--p, 0) * 100%);
+    background: linear-gradient(var(--chalk), var(--brass) 60%, var(--bad));
+  }
+  #power::after { content: "pull"; position: absolute; left: 0; right: 0; bottom: 10px; text-align: center; font-size: 11px; color: var(--muted); letter-spacing: .08em; text-transform: uppercase; pointer-events: none; }
+
+  .bottom { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; align-items: center; min-height: 44px; }
+  .msg { min-width: 0; }
+  #status { font-weight: 600; }
+  #note { color: var(--warn); font-size: 13px; min-height: 1.2em; }
+  .tray { display: flex; gap: 3px; align-items: center; padding: 4px 8px; min-height: 28px; min-width: 60px; border-radius: 14px; background: #0a0e10; box-shadow: inset 0 2px 6px rgba(0,0,0,.6); }
+  .actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+
+  /* Portrait: the table turns vertical and the controls sit in a row beneath it. */
+  @media (max-aspect-ratio: 4/5) {
+    #game { gap: 4px; --gut: 8px; }
+    .hud { gap: 6px; }
+    .team { padding: 4px 8px; flex-direction: column; align-items: flex-start; gap: 2px; }
+    .team.r { flex-direction: column; align-items: flex-end; }
+    .grp, .team.r .grp { align-items: inherit; }
+    .glabel { display: none; }
+    .chip { width: 15px; height: 15px; font-size: 8px; }
+    .chip i { width: 9px; height: 9px; }
+    .arena { grid-template-columns: auto minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; grid-template-areas: "table table" "hit power"; gap: 6px; }
+    .ctl.hit { flex-direction: row; }
+    .ctl.hit .label { display: none; }
+    #hit { width: 72px; height: 72px; }
+    .fine { flex-direction: column; gap: 4px; }
+    .fine button { min-height: 34px; padding: 4px 10px; }
+    .ctl.pow { height: auto; width: 100%; }
+    .ctl.pow .label { display: none; }
+    #power { width: 100%; height: 56px; min-height: 0; }
+    #powerFill { top: 0; bottom: 0; right: auto; height: auto; width: calc(var(--p, 0) * 100%); background: linear-gradient(90deg, var(--chalk), var(--brass) 60%, var(--bad)); }
+    #power::after { content: "pull \2192"; bottom: auto; top: 50%; transform: translateY(-50%); }
+    .bottom { grid-template-columns: minmax(0, 1fr) auto; gap: 4px 8px; }
+    .bottom .msg { grid-column: 1 / -1; font-size: 14px; }
+    .bottom .tray { justify-self: start; }
+    .actions { gap: 6px; flex-wrap: nowrap; }
+    .actions button, .actions select { min-height: 36px; padding: 4px 8px; }
+  }
+  @media (max-height: 520px) and (min-aspect-ratio: 4/5) {
+    #hit { width: 80px; height: 80px; }
+    .ctl .label { display: none; }
+    .team { padding: 3px 8px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+  }
 </style>
 </head>
 <body>
-<main>
-  <div id="stage">
-    <canvas id="table" aria-label="Pool table. Drag to aim."></canvas>
-    <div id="status" role="status"></div>
-    <div id="note" role="status"></div>
-    <div id="chooseBar" class="bar" hidden>
-      <button id="rerack">Re-rack and break</button>
-      <button id="playOn">Play on</button>
+<section id="game">
+  <header class="hud">
+    <div class="team" id="team0"><div class="players"></div><div class="grp"><span class="glabel"></span><div class="chips"></div></div></div>
+    <div class="turn">
+      <div class="clock" id="clock" hidden>
+        <svg viewBox="0 0 44 44" aria-hidden="true"><circle class="track" cx="22" cy="22" r="19"/><circle class="arc" id="clockArc" cx="22" cy="22" r="19" stroke-dasharray="119.38" stroke-dashoffset="0"/></svg>
+        <b id="clockText" role="timer" aria-label="Shot clock"></b>
+      </div>
     </div>
-    <div class="bar">
-      <label>Mode <select id="mode"><option value="assist">Assist</option><option value="hard">Hard</option></select></label>
-      <label>Bot <select id="difficulty"><option value="easy">Easy</option><option value="medium" selected>Medium</option><option value="hard">Hard</option></select></label>
-      <button id="newGame">New game</button>
-    </div>
-  </div>
-  <aside>
-    <div>
-      <div class="label">Hit point</div>
-      <div id="hit" aria-label="Cue ball hit point"><div id="hitLimit"></div><div id="hitDot"></div></div>
-      <div class="label" style="margin-top:12px">Fine aim</div>
-      <div id="fine">
+    <div class="team r" id="team1"><div class="players"></div><div class="grp"><span class="glabel"></span><div class="chips"></div></div></div>
+  </header>
+  <div class="arena">
+    <div class="ctl hit">
+      <div class="label">Spin</div>
+      <div id="hit" aria-label="Cue ball hit point. Drag to set spin."><div id="hitLimit"></div><div id="hitDot"></div></div>
+      <div class="fine">
         <button id="fineLeft" aria-label="Rotate aim counterclockwise">&#8634;</button>
         <button id="fineRight" aria-label="Rotate aim clockwise">&#8635;</button>
       </div>
     </div>
-    <div>
-      <div class="label">Pull to shoot</div>
+    <div class="tableWrap"><canvas id="table" aria-label="Pool table. Drag to aim."></canvas></div>
+    <div class="ctl pow">
+      <div class="label">Power</div>
       <div id="power" role="slider" tabindex="0" aria-label="Shot power. Arrow keys set it, Enter shoots." aria-orientation="vertical" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div id="powerFill"></div></div>
     </div>
-  </aside>
-</main>
+  </div>
+  <footer class="bottom">
+    <div class="msg"><div id="status" role="status"></div><div id="note" role="status"></div></div>
+    <div class="tray" id="tray" aria-label="Potted balls"></div>
+    <div class="actions">
+      <span id="chooseBar" hidden><button id="rerack">Re-rack</button> <button id="playOn" class="primary">Play on</button></span>
+      <select id="mode" aria-label="Mode"><option value="assist">Assist</option><option value="hard">Hard</option></select>
+      <select id="difficulty" aria-label="Bot"><option value="easy">Easy</option><option value="medium" selected>Medium</option><option value="hard">Hard</option></select>
+      <button id="newGame" class="primary">New game</button>
+    </div>
+  </footer>
+</section>
 <script type="module" src="/src/main.ts"></script>
 </body>
 </html>

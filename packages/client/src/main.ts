@@ -3,14 +3,21 @@ import {
   type BallPos, type EndReason, type Foul, type GameState, type Mode, type RoomView, type ShotBroadcast,
 } from '@chalkline/shared';
 import { io } from 'socket.io-client';
+import { renderClock, renderTeams, renderTray, type HudSeat } from './hud';
 import { buildTracks, sampleTrack, type TrackPoint } from './playback';
 import { aimPreview, type Preview } from './preview';
-import { drawBall, drawBalls, drawCue, drawPreview, drawTable, fit, toWorld } from './render';
+import { drawBalls, drawCue, drawPreview, drawTable, layout, newBallLayer, toWorld, type View } from './render';
 
 const FINE_STEP = (0.05 * Math.PI) / 180; // about 2 mm of aim across the table's length
 const IDLE_PREVIEW_POWER = 0.5; // before the slider is pulled, a zero-power preview would stop short of everything
 const GRAB_RADIUS = 3 * BALL_R; // generous enough for a fingertip
 const POCKET_TAP_RADIUS = 0.1;
+const CUE_REST_GAP = 0.012; // tip to ball with no power
+const CUE_PULL = 0.25; // extra draw-back at full power
+const STRIKE_MS = 110;
+const POT_DROP = 0.35; // seconds a potted ball takes to sink
+const CLOCK_MS = 45000;
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
 const FOUL_TEXT: Record<Foul, string> = {
   scratch: 'scratch',
@@ -36,7 +43,14 @@ const hitDot = el('hitDot');
 const powerEl = el('power');
 const powerFill = el('powerFill');
 
-interface Playback { shot: ShotBroadcast; tracks: Map<number, TrackPoint[]>; start: number; gone: Map<number, number> }
+interface Playback {
+  shot: ShotBroadcast;
+  tracks: (TrackPoint[] | undefined)[]; // by ball id
+  start: number;
+  end: number;
+  goneAt: Float64Array; // by ball id; Infinity if it stays up
+  pocket: Int8Array; // by ball id; -1 unless potted
+}
 
 const socket = io();
 let game: GameState | null = null;
@@ -53,6 +67,16 @@ let draggingCue = false;
 let aiming = false;
 let preview: Preview | null = null;
 let previewKey = '';
+let view: View | null = null;
+let strike: { angle: number; gap: number; start: number; x: number; y: number } | null = null;
+let potted: number[] = []; // for the tray, in the order they went down
+let deadline: number | null = null; // local clock time the shot clock runs out
+const layer = newBallLayer();
+const sample = { x: 0, y: 0 };
+const seats: HudSeat[] = [
+  { name: 'You', team: 0, connected: true, gone: false },
+  { name: 'Bot', team: 1, connected: true, gone: false },
+];
 
 const balls = (): BallPos[] => game?.balls ?? [];
 const cueBall = () => balls().find((b) => b.id === 0);
@@ -63,6 +87,11 @@ const mustCall = () => shooting() && game!.phase === 'play' && isOnEight(game!, 
 function setGame(next: GameState) {
   game = next;
   previewKey = '';
+  const up = new Set(next.balls.map((b) => b.id));
+  potted = potted.filter((id) => !up.has(id));
+  for (let id = 1; id < 16; id++) if (!up.has(id) && !potted.includes(id)) potted.push(id);
+  renderTray(potted);
+  renderTeams(next, seats, seat);
   renderStatus();
 }
 
@@ -89,9 +118,22 @@ function renderStatus() {
 }
 
 function startPlayback(shot: ShotBroadcast) {
-  const gone = new Map<number, number>();
-  for (const e of shot.events) if (e.type === 'pot' || e.type === 'off') gone.set(e.a, e.t);
-  playback = { shot, tracks: buildTracks(balls(), shot.frames), start: performance.now(), gone };
+  const goneAt = new Float64Array(16).fill(Infinity);
+  const pocket = new Int8Array(16).fill(-1);
+  let end = shot.duration;
+  for (const e of shot.events) {
+    if (e.type === 'off') goneAt[e.a] = e.t;
+    if (e.type === 'pot') {
+      goneAt[e.a] = e.t;
+      pocket[e.a] = e.pocket;
+      end = Math.max(end, e.t + POT_DROP);
+    }
+  }
+  const byId = buildTracks(balls(), shot.frames);
+  const tracks = Array.from({ length: 16 }, (_, id) => byId.get(id));
+  // Let the cue stick finish its strike before the balls move.
+  const start = Math.max(performance.now(), strike && !reducedMotion.matches ? strike.start + STRIKE_MS : 0);
+  playback = { shot, tracks, start, end, goneAt, pocket };
   waiting = false;
   called = null;
   noteEl.textContent = '';
@@ -131,12 +173,14 @@ function shoot() {
   // atan2 brings fine-aim drift back into the range the server validates.
   socket.emit('shot', { angle: Math.atan2(Math.sin(angle), Math.cos(angle)), power, hitX, hitY });
   waiting = true;
+  const cue = cueBall()!;
+  strike = { angle, gap: CUE_REST_GAP + power * CUE_PULL, start: performance.now(), x: cue.x, y: cue.y };
   setPower(0);
 }
 
 function setPower(p: number) {
   power = Math.max(0, Math.min(1, p));
-  powerFill.style.height = `${power * 100}%`;
+  powerFill.style.setProperty('--p', String(power));
   powerEl.setAttribute('aria-valuenow', String(Math.round(power * 100)));
 }
 
@@ -159,33 +203,74 @@ function updatePreview() {
   preview = aimPreview(mode, balls(), { angle, power: p, hitX, hitY });
 }
 
-function frame(now: number) {
-  const v = fit(canvas);
-  drawTable(v, mustCall(), called);
-  if (playback) {
-    const t = (now - playback.start) / 1000;
-    for (const [id, track] of playback.tracks) {
-      const goneAt = playback.gone.get(id);
-      if (goneAt !== undefined && t >= goneAt) continue;
-      const pos = sampleTrack(track, t);
-      drawBall(v, id, pos.x, pos.y);
-    }
-    if (t >= playback.shot.duration) finishPlayback(playback);
-  } else {
-    drawBalls(v, balls());
-    const cue = cueBall();
-    if (shooting() && cue) {
-      updatePreview();
-      if (preview) drawPreview(v, preview);
-      drawCue(v, cue, angle, power);
+/** Fill the ball layer from the playback at time t (seconds), sinking potted balls into their pockets. */
+function sampleShot(p: Playback, t: number) {
+  for (let id = 0; id < 16; id++) {
+    const track = p.tracks[id];
+    layer.shown[id] = 0;
+    if (!track) continue;
+    const goneAt = p.goneAt[id];
+    const sinking = t - goneAt;
+    const pocket = p.pocket[id];
+    if (sinking >= 0 && (pocket < 0 || sinking >= POT_DROP || reducedMotion.matches)) continue;
+    sampleTrack(track, Math.min(t, goneAt), sample);
+    layer.shown[id] = 1;
+    layer.x[id] = sample.x;
+    layer.y[id] = sample.y;
+    layer.size[id] = 1;
+    layer.dark[id] = 0;
+    if (sinking >= 0) {
+      const k = sinking / POT_DROP;
+      const q = POCKETS[pocket];
+      layer.x[id] += (q.x - sample.x) * k;
+      layer.y[id] += (q.y - sample.y) * k;
+      layer.size[id] = 1 - 0.45 * k;
+      layer.dark[id] = 0.85 * k;
     }
   }
+}
+
+function sampleRest() {
+  layer.shown.fill(0);
+  for (const b of balls()) {
+    layer.shown[b.id] = 1;
+    layer.x[b.id] = b.x;
+    layer.y[b.id] = b.y;
+    layer.size[b.id] = 1;
+    layer.dark[b.id] = 0;
+  }
+}
+
+function frame(now: number) {
   requestAnimationFrame(frame);
+  const v = view;
+  if (!v) return;
+  drawTable(v, mustCall(), called);
+  if (playback && now >= playback.start) {
+    const t = (now - playback.start) / 1000;
+    sampleShot(playback, t);
+    drawBalls(v, layer);
+    if (t >= playback.end) finishPlayback(playback);
+  } else {
+    sampleRest();
+    drawBalls(v, layer);
+    const cue = cueBall();
+    if (strike && (waiting || playback)) {
+      // The stick drives through to the ball, then holds there until the balls start moving.
+      const k = reducedMotion.matches ? 1 : Math.min(1, (now - strike.start) / STRIKE_MS);
+      drawCue(v, strike, strike.angle, strike.gap * (1 - k * k), false);
+    } else if (shooting() && cue) {
+      updatePreview();
+      if (preview) drawPreview(v, preview);
+      drawCue(v, cue, angle, CUE_REST_GAP + power * CUE_PULL, true);
+    }
+  }
+  renderClock(deadline === null || game?.phase === 'over' ? null : deadline - Date.now(), CLOCK_MS);
 }
 
 function pointerWorld(e: PointerEvent) {
   const r = canvas.getBoundingClientRect();
-  return toWorld(fit(canvas), e.clientX - r.left, e.clientY - r.top);
+  return toWorld(view!, e.clientX - r.left, e.clientY - r.top);
 }
 
 function aimAt(x: number, y: number) {
@@ -194,7 +279,7 @@ function aimAt(x: number, y: number) {
 }
 
 canvas.addEventListener('pointerdown', (e) => {
-  if (!shooting()) return;
+  if (!shooting() || !view) return;
   const p = pointerWorld(e);
   const cue = cueBall();
   canvas.setPointerCapture(e.pointerId);
@@ -217,6 +302,7 @@ canvas.addEventListener('pointerdown', (e) => {
 });
 
 canvas.addEventListener('pointermove', (e) => {
+  if (!view) return;
   const p = pointerWorld(e);
   const cue = cueBall();
   if (draggingCue && cue && game) {
@@ -251,20 +337,23 @@ hitPad.addEventListener('pointermove', (e) => {
   if (hitPad.hasPointerCapture(e.pointerId)) moveHit(e);
 });
 
+// The slider runs down in landscape and to the right when the portrait layout lays it flat.
+const powerFlat = () => powerEl.clientWidth > powerEl.clientHeight;
 let pullFrom = 0;
 powerEl.addEventListener('pointerdown', (e) => {
   if (!shooting()) return;
   powerEl.setPointerCapture(e.pointerId);
-  pullFrom = e.clientY;
+  pullFrom = powerFlat() ? e.clientX : e.clientY;
 });
 powerEl.addEventListener('pointermove', (e) => {
-  if (powerEl.hasPointerCapture(e.pointerId)) setPower((e.clientY - pullFrom) / powerEl.clientHeight);
+  if (!powerEl.hasPointerCapture(e.pointerId)) return;
+  setPower(powerFlat() ? (e.clientX - pullFrom) / powerEl.clientWidth : (e.clientY - pullFrom) / powerEl.clientHeight);
 });
 powerEl.addEventListener('pointerup', shoot);
 powerEl.addEventListener('pointercancel', () => setPower(0));
 powerEl.addEventListener('keydown', (e) => {
-  if (e.key === 'ArrowDown') setPower(power + 0.02);
-  else if (e.key === 'ArrowUp') setPower(power - 0.02);
+  if (e.key === 'ArrowDown' || e.key === 'ArrowRight') setPower(power + 0.02);
+  else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') setPower(power - 0.02);
   else if (e.key === 'Enter' || e.key === ' ') shoot();
   else return;
   e.preventDefault();
@@ -286,7 +375,7 @@ function holdToRepeat(button: HTMLElement, step: () => void) {
 holdToRepeat(el('fineLeft'), () => (angle += FINE_STEP));
 holdToRepeat(el('fineRight'), () => (angle -= FINE_STEP));
 window.addEventListener('keydown', (e) => {
-  if (e.target instanceof HTMLSelectElement) return;
+  if (e.target instanceof HTMLSelectElement || e.target === powerEl) return;
   if (e.key === 'ArrowLeft') angle += FINE_STEP;
   else if (e.key === 'ArrowRight') angle -= FINE_STEP;
 });
@@ -294,7 +383,9 @@ window.addEventListener('keydown', (e) => {
 el('newGame').addEventListener('click', () => {
   playback = null;
   waiting = false;
+  strike = null;
   called = null;
+  potted = [];
   angle = 0;
   noteEl.textContent = '';
   setPower(0);
@@ -306,6 +397,18 @@ el('newGame').addEventListener('click', () => {
 el('rerack').addEventListener('click', () => socket.emit('choose', { choice: 'rerack' }));
 el('playOn').addEventListener('click', () => socket.emit('choose', { choice: 'playOn' }));
 
+const relayout = () => {
+  view = layout(canvas);
+};
+new ResizeObserver(relayout).observe(canvas);
+// Zooming or moving to another screen changes the pixel ratio without resizing the box.
+const watchDpr = () => matchMedia(`(resolution: ${devicePixelRatio}dppx)`).addEventListener('change', () => {
+  relayout();
+  watchDpr();
+}, { once: true });
+watchDpr();
+
 setHit(0, 0);
+renderTeams(null, seats, seat);
 renderStatus();
 requestAnimationFrame(frame);

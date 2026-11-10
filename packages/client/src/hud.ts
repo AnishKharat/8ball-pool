@@ -1,0 +1,62 @@
+import { currentSeat, groupOf, type GameState } from '@chalkline/shared';
+import { ballCss } from './sphere';
+
+export interface HudSeat { name: string; team: number; connected: boolean; gone: boolean }
+
+const CLOCK_LEN = 2 * Math.PI * 19; // matches the ring's r in index.html
+
+function chip(id: number, gone = false): HTMLElement {
+  const c = document.createElement('span');
+  c.className = `chip${id > 8 ? ' st' : ''}${gone ? ' gone' : ''}`;
+  c.style.setProperty('--c', ballCss(id));
+  const n = document.createElement('i');
+  n.textContent = String(id);
+  c.append(n);
+  c.title = `Ball ${id}`;
+  return c;
+}
+
+/** Team cards: who is in each team, who is up, and each team's group with the balls it has left. */
+export function renderTeams(game: GameState | null, seats: HudSeat[], mySeat: number) {
+  const up = game && game.phase !== 'over' ? currentSeat(game) : -1;
+  for (const team of [0, 1]) {
+    const card = document.getElementById(`team${team}`)!;
+    const players = card.querySelector('.players')!;
+    players.replaceChildren(
+      ...seats.flatMap((s, i) => {
+        if (s.team !== team) return [];
+        const row = document.createElement('div');
+        row.className = `pl${i === up ? ' up' : ''}${s.gone || !s.connected ? ' off' : ''}`;
+        const name = document.createElement('span');
+        name.textContent = i === mySeat ? `${s.name} (you)` : s.name;
+        row.append(name);
+        return [row];
+      }),
+    );
+    card.classList.toggle('active', up !== -1 && seats[up]?.team === team);
+    const group = game ? groupOf(game, team) : null;
+    card.querySelector('.glabel')!.textContent = group ?? 'open table';
+    const onTable = new Set(game?.balls.map((b) => b.id));
+    const ids = group === 'solids' ? [1, 2, 3, 4, 5, 6, 7, 8] : group === 'stripes' ? [9, 10, 11, 12, 13, 14, 15, 8] : [];
+    card.querySelector('.chips')!.replaceChildren(...ids.map((id) => chip(id, !onTable.has(id))));
+  }
+}
+
+export function renderTray(potted: readonly number[]) {
+  document.getElementById('tray')!.replaceChildren(...potted.map((id) => chip(id)));
+}
+
+let lastClock = '';
+/** Remaining time as a ring and whole seconds; null hides it. Touches the DOM only when the shown value changes. */
+export function renderClock(leftMs: number | null, totalMs: number) {
+  const key = leftMs === null ? '' : String(Math.ceil(leftMs / 100));
+  if (key === lastClock) return;
+  lastClock = key;
+  const clock = document.getElementById('clock')!;
+  clock.hidden = leftMs === null;
+  if (leftMs === null) return;
+  const left = Math.max(0, leftMs);
+  document.getElementById('clockArc')!.setAttribute('stroke-dashoffset', String(CLOCK_LEN * (1 - left / totalMs)));
+  document.getElementById('clockText')!.textContent = String(Math.ceil(left / 1000));
+  clock.classList.toggle('low', left < 10000);
+}

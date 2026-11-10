@@ -40,6 +40,14 @@ Update this at the end of every working session. Keep it short and current. Rewr
 - [x] Candidate shots, simulated scoring, noise by difficulty
 - [x] Playable 1 vs Bot through the server
 
+### 6a. Visual redesign (client only)
+- [x] Centred, aspect-true table that refits on resize and DPR change; portrait turns the table vertical
+- [x] HUD around the table: teams, groups with balls left, turn, shot clock ring, power, spin selector, potted tray
+- [x] Lit balls with contact shadow; stripes and numbers roll with a per-ball quaternion
+- [x] Wood rails with bevels, lit cushions, cloth weave and vignette, deep pockets, diamonds; static table pre-rendered
+- [x] Shaded cue that draws back with power and strikes; potted balls sink and darken
+- [x] Reduced motion; frame cost checked at 4x CPU throttle on a 390x844 @3x viewport
+
 ### 6. Multiplayer
 - [ ] Rooms, codes, lobby, seats and teams
 - [ ] Validated shot flow and result broadcast
@@ -76,6 +84,10 @@ Update this at the end of every working session. Keep it short and current. Rewr
 | 2026-11-05 | Ball in hand and the called pocket are separate validated messages (`place`, `call`); `shot` carries only the four intent fields | Keeps the shot message to exactly what CLAUDE.md allows |
 | 2026-11-05 | Bot has no bank shot candidates; it only finds kicks through a fan of simulated angles when no ball can be hit directly | Spec says banks only "if cheap" |
 
+| 2026-11-11 | Balls are shaded per pixel into one small sprite each, repainted only after the ball rolls | Canvas 2D can't texture a sphere; the per-pixel cost is tiny at ball size, and the lighting table is shared |
+| 2026-11-11 | Portrait turns the table 90 degrees, and each ball a quarter turn with it | Numbers stay upright on screen; orientation is visual only |
+| 2026-11-11 | Cloth is teal, rails dark walnut, accents chalk blue and brass | Original look, distinct from Miniclip's green and blue |
+
 ## Physics tuning log
 
 Record constant changes and what prompted them.
@@ -90,7 +102,8 @@ Record constant changes and what prompted them.
 - `npm start` doesn't serve the built client yet, so the game currently runs only under `npm run dev`. Add static serving by milestone 8.
 - The shot clock isn't running yet, so a human can sit on a turn forever. Milestone 6. `Match.expire()` is ready for it.
 - The foul note doesn't say who fouled. Milestone 7.
-- Cosmetic, for milestone 7: pocket facing lines overlap the rail; no portrait layout yet.
+- `server.test.ts` "more difficulty pots more of a long cut" is random (40 noisy trials) and failed once in 4 runs. Pre-existing, not touched.
+- Ball numbers on a 390 px-wide phone are about 6 CSS px tall: legible on a 3x screen, small. Not checked on a physical phone.
 
 ## Session log
 
