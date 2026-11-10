@@ -1,5 +1,5 @@
 import {
-  BALL_R, FACING_LEN, FOOT_SPOT_X, HALF_L, HALF_W, HEAD_STRING_X, POCKETS, SEGMENTS, TABLE_L, TABLE_W,
+  BALL_SLOTS, BALL_R, FACING_LEN, FOOT_SPOT_X, HALF_L, HALF_W, HEAD_STRING_X, POCKETS, SEGMENTS, TABLE_L, TABLE_W,
 } from '@chalkline/shared';
 import type { Point, Preview } from './preview';
 import { ballSprite, setBallScale, spriteSize, trackRoll } from './sphere';
@@ -365,7 +365,7 @@ export function drawTable(v: View, callable: boolean, called: number | null) {
 /** One frame's balls, indexed by id. `size` < 1 shrinks a ball and `dark` > 0 darkens it as it drops. */
 export interface BallLayer { shown: Uint8Array; x: Float64Array; y: Float64Array; size: Float64Array; dark: Float64Array }
 export const newBallLayer = (): BallLayer => ({
-  shown: new Uint8Array(16), x: new Float64Array(16), y: new Float64Array(16), size: new Float64Array(16), dark: new Float64Array(16),
+  shown: new Uint8Array(BALL_SLOTS), x: new Float64Array(BALL_SLOTS), y: new Float64Array(BALL_SLOTS), size: new Float64Array(BALL_SLOTS), dark: new Float64Array(BALL_SLOTS),
 });
 
 export function drawBalls(v: View, layer: BallLayer) {
@@ -375,7 +375,7 @@ export function drawBalls(v: View, layer: BallLayer) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   // Shadows first, so none lands on a neighbouring ball; offset away from the top-left light.
   const ss = shadowCanvas.width;
-  for (let id = 0; id < 16; id++) {
+  for (let id = 0; id < BALL_SLOTS; id++) {
     if (!layer.shown[id]) continue;
     const k = layer.size[id];
     const x = screenX(v, layer.x[id], layer.y[id]) * d + r * 0.28 * k;
@@ -385,7 +385,7 @@ export function drawBalls(v: View, layer: BallLayer) {
   }
   ctx.globalAlpha = 1;
   const size = spriteSize();
-  for (let id = 0; id < 16; id++) {
+  for (let id = 0; id < BALL_SLOTS; id++) {
     if (!layer.shown[id]) continue;
     trackRoll(id, layer.x[id], layer.y[id], BALL_R);
     const k = layer.size[id];

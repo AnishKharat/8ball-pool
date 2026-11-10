@@ -67,8 +67,8 @@ function next<T>(c: Client, event: string, ms = 3000): Promise<T> {
 }
 
 /** Host creates a room, everyone else joins and readies, the host starts. Clients come back in seat order. */
-async function startedGame(server: Awaited<ReturnType<typeof serve>>, format: '1v1' | '1v2' | '2v2') {
-  const n = { '1v1': 2, '1v2': 3, '2v2': 4 }[format];
+async function startedGame(server: Awaited<ReturnType<typeof serve>>, format: '1v1' | '1v2' | '2v2' | '1v1v1' | '1v1v1v1') {
+  const n = { '1v1': 2, '1v2': 3, '2v2': 4, '1v1v1': 3, '1v1v1v1': 4 }[format];
   const host = await server.client();
   host.s.emit('createRoom', { name: 'Host', mode: 'assist', format });
   const { code } = await until(host, (v) => !!v.code);
@@ -344,6 +344,62 @@ describe('rooms over real sockets', () => {
     d.s.close();
     await new Promise((r) => setTimeout(r, 150));
     expect(server.rooms.rooms.has(lobby.code)).toBe(false);
+  });
+
+  it.each([['1v1v1', 3], ['1v1v1v1', 4]] as const)('%s: create, join, start, and only the player up may shoot', async (format, n) => {
+    const server = await serve(SLOW);
+    const { players } = await startedGame(server, format);
+    const v = players[0].view!;
+    expect(v.seats.map((p) => p!.name)).toEqual(['Host', ...Array.from({ length: n - 1 }, (_, i) => `P${i + 1}`)]);
+    expect(v.teams).toEqual(Array.from({ length: n }, (_, i) => i));
+    expect(v.game).toMatchObject({ rules: 'ffa', phase: 'break', scores: Array(n).fill(0) });
+    expect(v.game!.balls).toHaveLength(22);
+    const up = currentSeat(v.game!);
+    const other = players[(up + 1) % n];
+    other.s.emit('shot', FEEBLE);
+    expect(await next(other, 'rejected')).toBe('not your turn');
+    const all = Promise.all(players.map((c) => next<ShotBroadcast>(c, 'shotResult')));
+    players[up].s.emit('shot', FEEBLE);
+    const results = await all;
+    // A feeble break is illegal: the next player has ball in hand anywhere.
+    expect(results[0].outcome.fouls).toEqual(['illegalBreak']);
+    expect(results[0].state).toMatchObject({ phase: 'play', ballInHand: true, turn: (up + 1) % n });
+    for (const r of results) expect(r.state).toEqual(results[0].state);
+  });
+
+  it.each([['1v1v1', 3], ['1v1v1v1', 4]] as const)('%s rotates turns in seat order from a random breaker', async (format, n) => {
+    const server = await serve({ clockMs: 120, graceMs: 60_000 });
+    const { players } = await startedGame(server, format);
+    const first = currentSeat(players[0].view!.game!);
+    const seen: number[] = [first];
+    await new Promise<void>((resolve) => {
+      players[0].s.on('room', (v: RoomView) => {
+        seen.push(currentSeat(v.game!));
+        if (seen.length === n + 1) resolve();
+      });
+    });
+    expect(seen).toEqual(Array.from({ length: n + 1 }, (_, i) => (first + i) % n));
+  });
+
+  it('free-for-all skips a player gone past the grace period, and ends when one player is left', async () => {
+    const server = await serve({ clockMs: 150, graceMs: 100 });
+    const { players } = await startedGame(server, '1v1v1v1');
+    players[1].s.close();
+    await until(players[0], (v) => v.seats[1]!.gone && v.game!.absent[1]);
+    const seen = new Set<number>();
+    await new Promise<void>((resolve) => {
+      players[0].s.on('room', (v: RoomView) => {
+        seen.add(currentSeat(v.game!));
+        if (seen.size === 3) resolve();
+      });
+    });
+    expect([...seen].sort()).toEqual([0, 2, 3]);
+    players[2].s.emit('leave');
+    await until(players[0], (v) => v.game!.absent[2]);
+    expect(players[0].view!.game!.phase).not.toBe('over');
+    players[3].s.close();
+    const over = await until(players[0], (v) => v.game!.phase === 'over');
+    expect(over.game).toMatchObject({ endReason: 'lastPlayer', winners: [0, 1, 2, 3] });
   });
 
   it('plays a human shot, then the bot answers through the same path', async () => {

@@ -14,6 +14,8 @@ This file is the spec. Progress lives in [MEMORY.md](MEMORY.md). Working rules l
 | 1v1 | 2 humans | A, B |
 | 1v2 | 3 humans | A, B1, A, B2 (the solo player shoots every team turn) |
 | 2v2 | 4 humans | A1, B1, A2, B2 |
+| 1v1v1 | 3 humans, each for themselves | A, B, C (free-for-all) |
+| 1v1v1v1 | 4 humans, each for themselves | A, B, C, D (free-for-all) |
 
 A player who pots legally shoots again. When the turn passes, the next player in the rotation shoots.
 
@@ -72,7 +74,7 @@ packages/
 | Client to server | Payload | Allowed when |
 |---|---|---|
 | `playBot` | name, mode, difficulty | any time (leaves the current room) |
-| `createRoom` | name, mode, format (1v1, 1v2, 2v2) | any time (leaves the current room) |
+| `createRoom` | name, mode, format (1v1, 1v2, 2v2, 1v1v1, 1v1v1v1) | any time (leaves the current room) |
 | `joinRoom` | name, code | room exists, in lobby, has a free seat |
 | `resume` | code, token | token matches a seat in that room |
 | `leave` | none | in a room |
@@ -172,6 +174,20 @@ Han, "On the Motion of a Pool Ball" (2005). Leckie & Greenspan, "An Event-Based 
 - **Calling:** only the 8 must be called, by clicking a pocket.
 - **Win:** pot the 8 in the called pocket on a legal shot after clearing your group.
 - **Loss:** pot the 8 early, into the wrong pocket, or together with a foul.
+
+## Rules (free-for-all: 1v1v1 and 1v1v1v1)
+
+Everyone plays for themselves, and the player who pots the most balls wins. Pure functions in `shared/src/ffa.ts`; `rulesFor(format)` in `shared/src/ruleset.ts` gives `Match` the right rule set.
+
+- **Rack:** 21 numbered object balls in a 6-row triangle (1+2+3+4+5+6), apex on the foot spot, same rack gap as eight-ball. The server randomises the order.
+- **No groups and no 8-ball.** Hitting any object ball first is legal. The 8 is an ordinary ball. Nothing is called.
+- **Turn order:** seat order A, B, C(, D). The first breaker is random.
+- **Break:** from behind the head string, with the eight-ball legality test (a ball potted, or at least 4 object balls reach a cushion). An illegal break passes the turn and gives the next player ball in hand anywhere. Balls potted on a legal break score for the breaker.
+- **Scoring:** 1 point per object ball potted on a legal shot. Pot one and you shoot again; otherwise the turn passes.
+- **Fouls:** scratch, no contact, no cushion after contact, ball off the table, shot clock expiry. The turn passes, the next player gets ball in hand anywhere, and balls potted on the foul shot stay down but score nothing. No points are deducted. A shot clock expiry on the unbroken rack passes the break on, as in eight-ball.
+- **End:** when all 21 balls are down, or as soon as nobody can catch the leader (balls left < leader's score minus second place). Most points wins. Players tied at the top share the win.
+- **Disconnects:** the same 60 s grace period, with the shot clock running. After it (or after a deliberate leave) the player is absent: their turns are skipped and their score stays on the board. If they resume with their token, they rejoin the rotation. If only one player is left who isn't absent, the match ends and the current scores decide it.
+- No bot seats in free-for-all.
 
 ## Bot
 

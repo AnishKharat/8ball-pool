@@ -1,6 +1,6 @@
 import {
-  applyShot, applyShotClockExpiry, chooseAfterIllegalBreak, currentSeat, currentTeam, isOnEight, MAX_HIT, newGame, placeCue,
-  POCKETS, simulateShot, type Format, type GameState, type Phase, type ShotBroadcast, type ShotIntent,
+  chooseAfterIllegalBreak, currentSeat, currentTeam, isOnEight, MAX_HIT, placeCue, POCKETS, rulesFor, simulateShot,
+  type Format, type GameState, type Phase, type RuleSet, type ShotBroadcast, type ShotIntent,
 } from '@chalkline/shared';
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null;
@@ -21,9 +21,11 @@ export class Match {
   called: number | null = null;
   /** No moves until the shot's playback has finished. */
   busyUntil = 0;
+  private rules: RuleSet;
 
   constructor(format: Format, private random: () => number = Math.random) {
-    this.state = newGame(format, random);
+    this.rules = rulesFor(format);
+    this.state = this.rules.newGame(random);
   }
 
   private refusal(seat: number, now: number, phases: Phase[]): string | null {
@@ -71,7 +73,7 @@ export class Match {
       return 'call a pocket first';
     }
     const { frames, events, balls, duration } = simulateShot(this.state.balls, shot);
-    const { state, outcome } = applyShot(this.state, { events, balls }, this.called, this.random);
+    const { state, outcome } = this.rules.applyShot(this.state, { events, balls }, this.called, this.random);
     this.state = state;
     this.called = null;
     this.busyUntil = now + duration * 1000;
@@ -80,7 +82,12 @@ export class Match {
 
   /** Foul for running out of time, and the way out if a seat can't produce a legal move. */
   expire(): void {
-    this.state = applyShotClockExpiry(this.state);
+    this.state = this.rules.expire(this.state);
     this.called = null;
+  }
+
+  /** A seat gave up (after the reconnect grace period) or came back. */
+  setAbsent(seat: number, absent: boolean): void {
+    this.state = this.rules.setAbsent(this.state, seat, absent);
   }
 }

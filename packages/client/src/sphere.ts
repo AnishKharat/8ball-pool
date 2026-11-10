@@ -1,5 +1,6 @@
 // Ball sprites: each ball is shaded per pixel as a lit sphere, with its pattern looked up through
 // a per-ball orientation that rolls with the ball's drawn motion. Visual only.
+import { BALL_SLOTS } from '@chalkline/shared';
 
 const IVORY = [244, 239, 226];
 const INK = [24, 24, 28];
@@ -7,7 +8,13 @@ const DOT = [176, 70, 62];
 export const BALL_RGB = [
   IVORY, [232, 182, 30], [32, 82, 176], [204, 46, 38], [104, 50, 150], [236, 112, 32], [22, 124, 82], [124, 32, 44], [22, 22, 26],
 ];
-export const ballCss = (id: number) => `rgb(${BALL_RGB[id > 8 ? id - 8 : id].join(',')})`;
+/** Free-for-all balls 16 to 21: six more colours, on a pattern of their own. */
+const EXTRA_RGB = [[226, 92, 150], [128, 186, 44], [64, 176, 224], [176, 128, 78], [104, 116, 130], [64, 62, 150]];
+/** Solids 1-8 are all colour, stripes 9-15 a colour band with white caps, 16-21 colour caps with a white band. */
+export type Pattern = 'cue' | 'solid' | 'stripe' | 'cap';
+export const ballPattern = (id: number): Pattern => (id === 0 ? 'cue' : id <= 8 ? 'solid' : id <= 15 ? 'stripe' : 'cap');
+const ballRgb = (id: number) => (id <= 8 ? BALL_RGB[id] : id <= 15 ? BALL_RGB[id - 8] : EXTRA_RGB[id - 16]);
+export const ballCss = (id: number) => `rgb(${ballRgb(id).join(',')})`;
 
 // Light in screen space (right, up, toward the viewer): above and to the top-left.
 const LX = -0.42;
@@ -35,13 +42,13 @@ const glyphs: Uint8Array[] = [];
 interface Sprite { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D; img: ImageData; dirty: boolean }
 const sprites: Sprite[] = [];
 /** Per ball: orientation quaternion (w, x, y, z) mapping body to world, and the last drawn position. */
-const quat = new Float64Array(16 * 4);
-const lastX = new Float64Array(16).fill(NaN);
-const lastY = new Float64Array(16).fill(NaN);
+const quat = new Float64Array(BALL_SLOTS * 4);
+const lastX = new Float64Array(BALL_SLOTS).fill(NaN);
+const lastY = new Float64Array(BALL_SLOTS).fill(NaN);
 const m = new Float64Array(9);
 let rotated = false;
 
-for (let id = 0; id < 16; id++) {
+for (let id = 0; id < BALL_SLOTS; id++) {
   // Numbers face up with a small random tilt, so the rack reads and still looks round.
   const a = Math.random() * 2 * Math.PI;
   const tilt = 0.25 * Math.random();
@@ -54,7 +61,7 @@ function buildGlyphs() {
   const c = document.createElement('canvas');
   c.width = c.height = glyphSize;
   const g = c.getContext('2d', { willReadFrequently: true })!;
-  for (let id = 1; id < 16; id++) {
+  for (let id = 1; id < BALL_SLOTS; id++) {
     g.clearRect(0, 0, glyphSize, glyphSize);
     g.fillStyle = '#000';
     g.textAlign = 'center';
@@ -118,7 +125,7 @@ export function setBallScale(radiusPx: number, rot: boolean) {
     }
   }
   buildGlyphs();
-  for (let id = 0; id < 16; id++) {
+  for (let id = 0; id < BALL_SLOTS; id++) {
     const canvas = sprites[id]?.canvas ?? document.createElement('canvas');
     canvas.width = canvas.height = size;
     const ctx = canvas.getContext('2d')!;
@@ -179,8 +186,8 @@ const ramp = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
 function paint(id: number, sp: Sprite) {
   bodyMatrix(id);
   const data = sp.img.data;
-  const base = BALL_RGB[id > 8 ? id - 8 : id];
-  const stripe = id > 8;
+  const base = ballRgb(id);
+  const pattern = ballPattern(id);
   const glyph = glyphs[id];
   const gs = glyphSize;
   const discEdge = DISC_SIN / rpx; // one pixel, in cos units
@@ -204,8 +211,9 @@ function paint(id: number, sp: Sprite) {
       g = IVORY[1] + (DOT[1] - IVORY[1]) * t;
       b = IVORY[2] + (DOT[2] - IVORY[2]) * t;
     } else {
-      // Outside the number discs: the ball colour, or for a stripe its white caps outside the band.
-      const t = stripe ? ramp(((bx < 0 ? -bx : bx) - BAND) / bandEdge + 0.5) : 0;
+      // Outside the number discs: the ball colour, or white caps outside a stripe's band, or a white band between caps.
+      const caps = pattern === 'solid' ? 0 : ramp(((bx < 0 ? -bx : bx) - BAND) / bandEdge + 0.5);
+      const t = pattern === 'stripe' ? caps : pattern === 'cap' ? 1 - caps : 0;
       r = base[0] + (IVORY[0] - base[0]) * t;
       g = base[1] + (IVORY[1] - base[1]) * t;
       b = base[2] + (IVORY[2] - base[2]) * t;

@@ -3,7 +3,7 @@ import type { BallPos, SimResult } from './physics';
 import { FOOT_SPOT_X, HEAD_STRING_X } from './table';
 
 /** Fisher-Yates, in place. */
-function shuffle<T>(items: T[], random: () => number): T[] {
+export function shuffle<T>(items: T[], random: () => number): T[] {
   for (let i = items.length - 1; i > 0; i--) {
     const j = Math.floor(random() * (i + 1));
     [items[i], items[j]] = [items[j], items[i]];
@@ -52,17 +52,22 @@ export function freeCueSpot(balls: readonly BallPos[]): { x: number; y: number }
   }
   spots.sort((a, b) => Math.hypot(a.x - HEAD_STRING_X, a.y) - Math.hypot(b.x - HEAD_STRING_X, b.y));
   const spot = spots.find((s) => canPlaceCue(balls, s.x, s.y, false));
-  if (!spot) throw new Error('no free spot'); // 15 balls can't cover the table
+  if (!spot) throw new Error('no free spot'); // 21 balls can't cover the table
   return spot;
 }
 
-export type Format = 'bot' | '1v1' | '1v2' | '2v2';
+export type Format = 'bot' | '1v1' | '1v2' | '2v2' | '1v1v1' | '1v1v1v1';
+/** Everyone for themselves, 21 balls, most pots wins. */
+export const isFreeForAll = (f: Format) => f === '1v1v1' || f === '1v1v1v1';
+/** Ball ids run 0 (cue) to 21, so per-ball arrays need this many slots. */
+export const BALL_SLOTS = 22;
 export type Group = 'solids' | 'stripes';
 export type Phase = 'break' | 'breakChoice' | 'play' | 'over';
-export type Foul = 'scratch' | 'wrongBall' | 'noContact' | 'noCushion' | 'offTable';
-export type EndReason = 'potted8' | 'early8' | 'wrongPocket' | 'foulOn8' | 'forfeit';
+export type Foul = 'scratch' | 'wrongBall' | 'noContact' | 'noCushion' | 'offTable' | 'illegalBreak';
+export type EndReason = 'potted8' | 'early8' | 'wrongPocket' | 'foulOn8' | 'forfeit' | 'allDown' | 'clinched' | 'lastPlayer';
 
 export interface GameState {
+  rules: 'eight' | 'ffa';
   /** Seats in shooting order; a seat appears twice when it shoots every team turn. */
   order: number[];
   /** Team (0 or 1) of each seat. */
@@ -72,8 +77,15 @@ export interface GameState {
   balls: BallPos[];
   solidsTeam: 0 | 1 | null;
   ballInHand: boolean;
+  /** Eight-ball: the winning team. */
   winner: 0 | 1 | null;
   endReason: EndReason | null;
+  /** Free-for-all: points by seat. Empty in eight-ball. */
+  scores: number[];
+  /** By seat: gave up or missed the reconnect grace period. */
+  absent: boolean[];
+  /** Free-for-all: the seats sharing the win. */
+  winners: number[];
 }
 
 export interface ShotOutcome {
@@ -90,16 +102,19 @@ const ROTATIONS: Record<Format, { order: number[]; teamOf: number[] }> = {
   '1v1': { order: [0, 1], teamOf: [0, 1] },
   '1v2': { order: [0, 1, 0, 2], teamOf: [0, 1, 1] },
   '2v2': { order: [0, 1, 2, 3], teamOf: [0, 1, 0, 1] },
+  '1v1v1': { order: [0, 1, 2], teamOf: [0, 1, 2] },
+  '1v1v1v1': { order: [0, 1, 2, 3], teamOf: [0, 1, 2, 3] },
 };
 
-/** Team (0 or 1) of each seat for a format. */
+/** Team of each seat for a format: 0 or 1, or one team per seat in free-for-all. */
 export const seatTeams = (format: Format): readonly number[] => ROTATIONS[format].teamOf;
 
+/** An eight-ball game. Free-for-all starts from `newFfaGame`; `rulesFor` picks the right one. */
 export function newGame(format: Format, random: () => number = Math.random): GameState {
   const { order, teamOf } = ROTATIONS[format];
   return {
-    order, teamOf, turn: 0, phase: 'break', balls: rackBalls(random),
-    solidsTeam: null, ballInHand: true, winner: null, endReason: null,
+    rules: 'eight', order, teamOf, turn: 0, phase: 'break', balls: rackBalls(random),
+    solidsTeam: null, ballInHand: true, winner: null, endReason: null, scores: [], absent: teamOf.map(() => false), winners: [],
   };
 }
 
@@ -115,6 +130,7 @@ export function groupOf(s: GameState, team: number): Group | null {
 
 /** The team has no balls left but the 8. Decided before a shot, so clearing and potting the 8 together loses. */
 export function isOnEight(s: GameState, team: number): boolean {
+  if (s.rules === 'ffa') return false;
   const group = groupOf(s, team);
   return !s.balls.some((b) => b.id !== 0 && b.id !== 8 && (group === null || inGroup(b.id, group)));
 }
@@ -126,7 +142,7 @@ export function placeCue(s: GameState, x: number, y: number): GameState | null {
 }
 
 /** A scratched cue ball returns to the table straight away, so state always has one. */
-function withCue(balls: BallPos[]): BallPos[] {
+export function withCue(balls: BallPos[]): BallPos[] {
   return balls.some((b) => b.id === 0) ? balls : [{ id: 0, ...freeCueSpot(balls) }, ...balls];
 }
 
@@ -226,4 +242,12 @@ export function applyShotClockExpiry(s: GameState): GameState {
 export function forfeit(s: GameState, team: number): GameState {
   if (s.phase === 'over') return s;
   return { ...s, phase: 'over', winner: (1 - team) as 0 | 1, endReason: 'forfeit' };
+}
+
+/** A seat gave up or came back. Teammates cover its turns (`mayAct`); a team with every seat absent forfeits. */
+export function setAbsent(s: GameState, seat: number, absent: boolean): GameState {
+  if (s.phase === 'over') return s;
+  const next = { ...s, absent: s.absent.map((a, i) => (i === seat ? absent : a)) };
+  const team = s.teamOf[seat];
+  return next.absent.every((a, i) => a || s.teamOf[i] !== team) ? forfeit(next, team) : next;
 }

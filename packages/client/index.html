@@ -53,6 +53,20 @@
   .chips { display: flex; gap: 2px; flex-wrap: wrap; }
   .turn { display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 64px; }
   .clock { position: relative; width: 44px; height: 44px; }
+
+  /* Free-for-all scoreboard: one cell per player, in shooting order, before the clock. */
+  .hud.ffa { grid-template-columns: minmax(0, 1fr) auto; }
+  .scores { display: grid; grid-template-columns: repeat(var(--n, 4), minmax(0, 1fr)); gap: 6px; min-width: 0; }
+  .sc { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto; column-gap: 6px; align-items: center;
+    padding: 4px 8px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+  .sc .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 13px; }
+  .sc b { grid-row: 1 / 3; grid-column: 2; font-size: 22px; font-variant-numeric: tabular-nums; }
+  .sc .st8 { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; min-height: 1.2em; }
+  .sc.up { border-color: var(--chalk); box-shadow: 0 0 0 1px var(--chalk); }
+  .sc.up .nm { color: var(--chalk); }
+  .sc.up .nm::before { content: "\25B8 "; }
+  .sc.lead b, .sc.lead .st8 { color: var(--brass); }
+  .sc.off { opacity: .55; }
   .clock svg { position: absolute; inset: 0; transform: rotate(-90deg); }
   .clock circle { fill: none; stroke-width: 4; }
   .clock .track { stroke: var(--line); }
@@ -67,6 +81,7 @@
     box-shadow: inset -2px -3px 4px rgba(0,0,0,.35), inset 2px 2px 3px rgba(255,255,255,.35);
   }
   .chip.st { background: linear-gradient(#f4efe2 0 24%, var(--c) 24% 76%, #f4efe2 76%); }
+  .chip.cap { background: linear-gradient(var(--c) 0 26%, #f4efe2 26% 74%, var(--c) 74%); }
   .chip i { font-style: normal; width: 11px; height: 11px; border-radius: 50%; background: #f4efe2; display: grid; place-items: center; }
   .chip.gone { opacity: .22; }
 
@@ -114,6 +129,11 @@
     .team.r { flex-direction: column; align-items: flex-end; }
     .grp, .team.r .grp { align-items: inherit; }
     .glabel { display: none; }
+    .scores { gap: 4px; }
+    .sc { padding: 3px 6px; column-gap: 4px; }
+    .sc .nm { font-size: 12px; }
+    .sc b { font-size: 18px; }
+    .sc .st8 { font-size: 10px; letter-spacing: 0; }
     .chip { width: 15px; height: 15px; font-size: 8px; }
     .chip i { width: 9px; height: 9px; }
     .arena { grid-template-columns: auto minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; grid-template-areas: "table table" "hit power"; gap: 6px; }
@@ -163,6 +183,10 @@
   .lobbyHead h2 { margin: 0; font-size: 20px; }
   .code { font: 800 26px/1 ui-monospace, Consolas, monospace; letter-spacing: .18em; color: var(--chalk); }
   .teamsGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 16px 0; }
+  .teamsGrid.one { grid-template-columns: 1fr; }
+  /* Free-for-all seats wrap into two columns where there's room, so 4 players fit a landscape phone. */
+  .teamsGrid.one .tcol { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); column-gap: 12px; }
+  .teamsGrid.one .tcol h3 { grid-column: 1 / -1; }
   .tcol h3 { margin: 0 0 8px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
   .seat { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 52px; padding: 8px 10px; margin-bottom: 8px; border: 1px solid var(--line); border-radius: 12px; background: #11181b; }
   .seat.empty { border-style: dashed; color: var(--muted); }
@@ -212,6 +236,8 @@
           <label><input type="radio" name="format" value="1v1" checked><span>1v1</span></label>
           <label><input type="radio" name="format" value="1v2"><span>1v2</span></label>
           <label><input type="radio" name="format" value="2v2"><span>2v2</span></label>
+          <label><input type="radio" name="format" value="1v1v1"><span>1v1v1</span></label>
+          <label><input type="radio" name="format" value="1v1v1v1"><span>1v1v1v1</span></label>
         </div>
         <div class="seg" role="radiogroup" aria-label="Mode for the room">
           <label><input type="radio" name="roomMode" value="assist" checked><span>Assist</span></label>
@@ -248,6 +274,7 @@
 <section id="game" hidden>
   <header class="hud">
     <div class="team" id="team0"><div class="players"></div><div class="grp"><span class="glabel"></span><div class="chips"></div></div></div>
+    <div class="scores" id="scores" aria-label="Scores" hidden></div>
     <div class="turn">
       <div class="clock" id="clock" hidden>
         <svg viewBox="0 0 44 44" aria-hidden="true"><circle class="track" cx="22" cy="22" r="19"/><circle class="arc" id="clockArc" cx="22" cy="22" r="19" stroke-dasharray="119.38" stroke-dashoffset="0"/></svg>

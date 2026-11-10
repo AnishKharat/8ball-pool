@@ -1,10 +1,10 @@
 import {
-  BALL_R, canPlaceCue, currentSeat, groupOf, isOnEight, mayAct, MAX_HIT, POCKETS, SHOT_CLOCK_MS,
+  BALL_R, BALL_SLOTS, canPlaceCue, FFA_BALLS, currentSeat, groupOf, isOnEight, mayAct, MAX_HIT, POCKETS, SHOT_CLOCK_MS,
   type BallPos, type ClientMessages, type EndReason, type Foul, type GameState, type Mode, type RoomFormat, type RoomView,
   type ServerMessages, type ShotBroadcast,
 } from '@chalkline/shared';
 import { io, type Socket } from 'socket.io-client';
-import { renderClock, renderTeams, renderTray, type HudSeat } from './hud';
+import { renderClock, renderScores, renderTeams, renderTray, type HudSeat } from './hud';
 import { renderLobby, TEAM_NAMES } from './lobby';
 import { onStick, TouchGesture } from './gesture';
 import { buildTracks, sampleTrack, type TrackPoint } from './playback';
@@ -32,6 +32,7 @@ const FOUL_TEXT: Record<Foul, string> = {
   noContact: 'no contact',
   noCushion: 'no cushion after contact',
   offTable: 'ball off the table',
+  illegalBreak: 'illegal break',
 };
 const END_TEXT: Record<EndReason, string> = {
   potted8: 'the 8 went in the called pocket',
@@ -39,6 +40,9 @@ const END_TEXT: Record<EndReason, string> = {
   wrongPocket: 'the 8 went in the wrong pocket',
   foulOn8: 'the 8 went down on a foul',
   forfeit: 'a team had nobody left at the table',
+  allDown: 'every ball is down',
+  clinched: 'nobody can catch the leader',
+  lastPlayer: 'everyone else left',
 };
 
 const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -170,19 +174,48 @@ function toMenu(reason = '') {
   if (location.pathname !== '/') history.replaceState(null, '', '/');
 }
 
+function renderHud() {
+  const ffa = game?.rules === 'ffa';
+  el('team0').hidden = ffa;
+  el('team1').hidden = ffa;
+  el('scores').hidden = !ffa;
+  el('game').querySelector('.hud')!.classList.toggle('ffa', ffa);
+  if (ffa) renderScores(game!, hudSeats(), seat);
+  else renderTeams(game, hudSeats(), seat);
+}
+
 function setGame(next: GameState) {
   game = next;
   previewKey = '';
   const up = new Set(next.balls.map((b) => b.id));
   potted = potted.filter((id) => !up.has(id));
-  for (let id = 1; id < 16; id++) if (!up.has(id) && !potted.includes(id)) potted.push(id);
+  const last = next.rules === 'ffa' ? FFA_BALLS : 15;
+  for (let id = 1; id <= last; id++) if (!up.has(id) && !potted.includes(id)) potted.push(id);
   renderTray(potted);
-  renderTeams(next, hudSeats(), seat);
+  renderHud();
   renderStatus();
   if (next.phase === 'over') showResult(next);
 }
 
+/** Free-for-all: "You win", "You share the win" or "You lose", and who took it with how many points. */
+function ffaResult(g: GameState): { title: string; text: string } {
+  const names = g.winners.map((i) => seatName(i));
+  const points = g.scores[g.winners[0]] ?? 0;
+  const mine = g.winners.includes(seat);
+  const title = mine ? (g.winners.length > 1 ? 'You share the win' : 'You win') : 'You lose';
+  const who = names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)} share the win` : names[0] === 'You' ? 'You win' : `${names[0]} wins`;
+  return { title, text: `${who} with ${points} point${points === 1 ? '' : 's'}: ${END_TEXT[g.endReason!]}.` };
+}
+
 function showResult(g: GameState) {
+  if (g.rules === 'ffa') {
+    const r = ffaResult(g);
+    el('overTitle').textContent = r.title;
+    el('overText').textContent = r.text;
+    el('overlay').hidden = false;
+    el('backToMenu').focus();
+    return;
+  }
   const won = g.winner === myTeam();
   const solo = room?.format === 'bot' || room?.format === '1v1';
   el('overTitle').textContent = won ? 'You win' : 'You lose';
@@ -197,10 +230,12 @@ function renderStatus() {
   if (!game) return void (statusEl.textContent = '');
   if (playback) return void (statusEl.textContent = '');
   const group = groupOf(game, myTeam());
-  const yours = group ? ` You have ${group}.` : ' The table is open.';
+  const yours = game.rules === 'ffa' ? '' : group ? ` You have ${group}.` : ' The table is open.';
   const up = currentSeat(game);
   const cover = up !== seat ? `Covering for ${seatName(up)}. ` : '';
-  if (game.phase === 'over') {
+  if (game.phase === 'over' && game.rules === 'ffa') {
+    statusEl.textContent = ffaResult(game).text;
+  } else if (game.phase === 'over') {
     const won = game.winner === myTeam();
     statusEl.textContent = `${won ? 'You win' : 'You lose'}: ${END_TEXT[game.endReason!]}.`;
   } else if (!room || !mayAct(game, room.seats, seat)) {
@@ -218,8 +253,8 @@ function renderStatus() {
 }
 
 function startPlayback(shot: ShotBroadcast) {
-  const goneAt = new Float64Array(16).fill(Infinity);
-  const pocket = new Int8Array(16).fill(-1);
+  const goneAt = new Float64Array(BALL_SLOTS).fill(Infinity);
+  const pocket = new Int8Array(BALL_SLOTS).fill(-1);
   let end = shot.duration;
   for (const e of shot.events) {
     if (e.type === 'off') goneAt[e.a] = e.t;
@@ -230,7 +265,7 @@ function startPlayback(shot: ShotBroadcast) {
     }
   }
   const byId = buildTracks(balls(), shot.frames);
-  const tracks = Array.from({ length: 16 }, (_, id) => byId.get(id));
+  const tracks = Array.from({ length: BALL_SLOTS }, (_, id) => byId.get(id));
   // Let the cue stick finish its strike before the balls move.
   const start = Math.max(performance.now(), strike && waiting && !reducedMotion.matches ? strike.start + STRIKE_MS : 0);
   playback = { shot, tracks, start, end, goneAt, pocket, shooter: game ? currentSeat(game) : -1 };
@@ -266,7 +301,7 @@ function onRoom(v: RoomView) {
   // A state sent during playback describes the table after it, so it replaces what playback will end on.
   if (playback) playback.shot.state = v.game;
   else setGame(v.game);
-  renderTeams(game, hudSeats(), seat);
+  renderHud();
 }
 
 // A duplicated tab copies sessionStorage, seat token included. Ask the other tabs first so the copy
@@ -360,7 +395,7 @@ function updatePreview() {
 
 /** Fill the ball layer from the playback at time t (seconds), sinking potted balls into their pockets. */
 function sampleShot(p: Playback, t: number) {
-  for (let id = 0; id < 16; id++) {
+  for (let id = 0; id < BALL_SLOTS; id++) {
     const track = p.tracks[id];
     layer.shown[id] = 0;
     if (!track) continue;

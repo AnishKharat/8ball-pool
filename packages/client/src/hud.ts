@@ -1,5 +1,5 @@
 import { currentSeat, groupOf, type GameState } from '@chalkline/shared';
-import { ballCss } from './sphere';
+import { ballCss, ballPattern } from './sphere';
 
 export interface HudSeat { name: string; team: number; connected: boolean; gone: boolean }
 
@@ -7,7 +7,8 @@ const CLOCK_LEN = 2 * Math.PI * 19; // matches the ring's r in index.html
 
 function chip(id: number, gone = false): HTMLElement {
   const c = document.createElement('span');
-  c.className = `chip${id > 8 ? ' st' : ''}${gone ? ' gone' : ''}`;
+  const pattern = ballPattern(id);
+  c.className = `chip${pattern === 'stripe' ? ' st' : pattern === 'cap' ? ' cap' : ''}${gone ? ' gone' : ''}`;
   c.style.setProperty('--c', ballCss(id));
   const n = document.createElement('i');
   n.textContent = String(id);
@@ -40,6 +41,32 @@ export function renderTeams(game: GameState | null, seats: HudSeat[], mySeat: nu
     const ids = group === 'solids' ? [1, 2, 3, 4, 5, 6, 7, 8] : group === 'stripes' ? [9, 10, 11, 12, 13, 14, 15, 8] : [];
     card.querySelector('.chips')!.replaceChildren(...ids.map((id) => chip(id, !onTable.has(id))));
   }
+}
+
+/** Free-for-all scoreboard: every player's name, points, turn and connection, with the leaders marked. */
+export function renderScores(game: GameState, seats: HudSeat[], mySeat: number) {
+  const up = game.phase !== 'over' ? currentSeat(game) : -1;
+  const best = Math.max(...game.scores);
+  const board = document.getElementById('scores')!;
+  board.style.setProperty('--n', String(seats.length));
+  board.replaceChildren(
+    ...seats.map((s, i) => {
+      const lead = best > 0 && game.scores[i] === best;
+      const cell = document.createElement('div');
+      cell.className = `sc${i === up ? ' up' : ''}${lead ? ' lead' : ''}${s.gone || !s.connected ? ' off' : ''}`;
+      const name = document.createElement('span');
+      name.className = 'nm';
+      name.textContent = i === mySeat ? `${s.name} (you)` : s.name;
+      const pts = document.createElement('b');
+      pts.textContent = String(game.scores[i]);
+      const state = document.createElement('span');
+      state.className = 'st8';
+      state.textContent = s.gone ? 'left' : !s.connected ? 'away' : lead ? 'leads' : i === up ? 'up' : '';
+      cell.append(name, pts, state);
+      cell.setAttribute('aria-label', `${name.textContent}: ${game.scores[i]} points${state.textContent ? `, ${state.textContent}` : ''}`);
+      return cell;
+    }),
+  );
 }
 
 export function renderTray(potted: readonly number[]) {

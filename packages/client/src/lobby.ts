@@ -1,6 +1,8 @@
-import type { RoomView } from '@chalkline/shared';
+import { isFreeForAll, type RoomView } from '@chalkline/shared';
 
-const FORMAT_TEXT: Record<string, string> = { bot: 'vs Bot', '1v1': '1 vs 1', '1v2': '1 vs 2', '2v2': '2 vs 2' };
+const FORMAT_TEXT: Record<string, string> = {
+  bot: 'vs Bot', '1v1': '1 vs 1', '1v2': '1 vs 2', '2v2': '2 vs 2', '1v1v1': 'Free-for-all, 3 players', '1v1v1v1': 'Free-for-all, 4 players',
+};
 export const TEAM_NAMES = ['Team A', 'Team B'];
 
 const make = (tag: string, cls: string, text = '') => {
@@ -10,15 +12,18 @@ const make = (tag: string, cls: string, text = '') => {
   return e;
 };
 
-/** Seats grouped by team, with sit buttons on empty seats. Names go in as text only. */
+/** Seats grouped by team, or one list of players in free-for-all, with sit buttons on empty seats. Names go in as text only. */
 export function renderLobby(v: RoomView, me: string | null, sit: (seat: number) => void) {
   document.getElementById('roomCode')!.textContent = v.code;
   document.getElementById('lobbyInfo')!.textContent = `${FORMAT_TEXT[v.format]} · ${v.mode === 'hard' ? 'Hard' : 'Assist'} mode`;
-  for (const team of [0, 1]) {
+  const solo = isFreeForAll(v.format);
+  document.getElementById('lt1')!.hidden = solo;
+  document.querySelector('.teamsGrid')!.classList.toggle('one', solo);
+  for (const team of solo ? [0] : [0, 1]) {
     const col = document.getElementById(`lt${team}`)!;
-    const rows: HTMLElement[] = [make('h3', '', TEAM_NAMES[team])];
+    const rows: HTMLElement[] = [make('h3', '', solo ? 'Players, in shooting order' : TEAM_NAMES[team])];
     v.seats.forEach((p, i) => {
-      if (v.teams[i] !== team) return;
+      if (!solo && v.teams[i] !== team) return;
       const row = make('div', `seat${p ? '' : ' empty'}${p?.id === me ? ' me' : ''}`);
       if (!p) {
         row.append(make('span', 'nm', 'Empty seat'));

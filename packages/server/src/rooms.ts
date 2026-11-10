@@ -1,6 +1,6 @@
 import { randomInt, randomUUID } from 'node:crypto';
 import {
-  CODE_ALPHABET, CODE_LENGTH, currentSeat, forfeit, mayAct, NAME_MAX, RECONNECT_GRACE_MS, seatTeams, SHOT_CLOCK_MS,
+  CODE_ALPHABET, CODE_LENGTH, currentSeat, mayAct, NAME_MAX, RECONNECT_GRACE_MS, seatTeams, SHOT_CLOCK_MS,
   type Difficulty, type Format, type Mode, type RoomFormat, type RoomView,
 } from '@chalkline/shared';
 import type { Server, Socket } from 'socket.io';
@@ -61,7 +61,8 @@ interface SocketData { code?: string; playerId?: string }
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null;
 const isMode = (v: unknown): v is Mode => v === 'assist' || v === 'hard';
 const isDifficulty = (v: unknown): v is Difficulty => v === 'easy' || v === 'medium' || v === 'hard';
-const isRoomFormat = (v: unknown): v is RoomFormat => v === '1v1' || v === '1v2' || v === '2v2';
+const ROOM_FORMATS: readonly unknown[] = ['1v1', '1v2', '2v2', '1v1v1', '1v1v1v1'] satisfies RoomFormat[];
+const isRoomFormat = (v: unknown): v is RoomFormat => ROOM_FORMATS.includes(v);
 const connected = (p: Player) => p.bot || p.socketId !== null;
 
 /** Printable, trimmed, at most NAME_MAX characters. Clients render names as text, never HTML. */
@@ -147,6 +148,7 @@ export class RoomManager {
       }
     }
     clearTimeout(player.grace);
+    if (player.gone) room.match?.setAbsent(room.seats.indexOf(player), false);
     player.gone = false;
     this.attach(socket, room, player);
     this.broadcast(room);
@@ -183,10 +185,8 @@ export class RoomManager {
       return this.broadcast(room);
     }
     player.gone = true;
-    const team = room.teams[room.seats.indexOf(player)];
-    if (room.seats.every((p, i) => room.teams[i] !== team || p!.gone)) {
-      room.match.state = forfeit(room.match.state, team);
-    }
+    // Eight-ball: a teammate covers, or the team forfeits. Free-for-all: the seat's turns are skipped.
+    room.match.setAbsent(room.seats.indexOf(player), true);
     this.afterTurn(room);
   }
 
