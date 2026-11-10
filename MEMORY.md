@@ -4,8 +4,8 @@ Update this at the end of every working session. Keep it short and current. Rewr
 
 ## Status
 
-**Current milestone:** 8, deployment readiness
-**Next step:** Serve the built client and /healthz from `npm start`, graceful shutdown, then build the Docker image and play against it.
+**Current milestone:** 9 done; 8's Docker items still open
+**Next step:** Check free-for-all and touch aiming on a physical phone, then build the Docker image (Docker isn't installed in WSL yet) and play against it.
 **Last updated:** 2026-11-11 (redesign and milestone 6 done)
 
 ## Milestones
@@ -69,14 +69,19 @@ Update this at the end of every working session. Keep it short and current. Rewr
 ### 9. Free-for-all, cloth friction, mobile aiming
 - [x] Cloth friction: `MU_ROLL` 0.01 to 0.014, roll, break and bot games remeasured
 - [x] Mobile aiming: relative touch aim, one finger, lift jitter ignored, pull-the-stick power, slider locks aim
-- [ ] Free-for-all rules (1v1v1, 1v1v1v1, 21 balls) as pure functions with tests
-- [ ] Free-for-all rooms, lobby seats, scoreboard HUD, 21-ball look
-- [ ] Full 1v1v1 and 1v1v1v1 matches played in browser windows, with a close and rejoin
+- [x] Free-for-all rules (1v1v1, 1v1v1v1, 21 balls) as pure functions with tests
+- [x] Free-for-all rooms, lobby seats, scoreboard HUD, 21-ball look
+- [x] Full 1v1v1 and 1v1v1v1 matches played in browser windows, with a close and rejoin
 
 ## Decisions
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-11-11 | Free-for-all "connected" means not absent: a seat counts as gone only after the 60 s grace or a deliberate leave | Matches eight-ball cover and forfeit; a brief drop shouldn't end the match |
+| 2026-11-11 | Eight-ball forfeit moved into the rules (`setAbsent`), so rooms call one `Match.setAbsent` for every format | One path for "a seat is gone"; behaviour unchanged, room tests still pass |
+| 2026-11-11 | When the player up goes absent, the turn passes with ball in hand unchanged; an illegal free-for-all break reports the foul `illegalBreak` | Not a foul by them; the note tells players why ball in hand happened |
+| 2026-11-11 | Balls 16-21 are coloured caps with a white band (the inverse of a stripe), in pink, lime, sky, tan, slate and indigo, numbered like the rest | A third pattern keeps them apart by more than colour |
+| 2026-11-11 | Free-for-all lobby is one list in shooting order, wrapping to two columns where there's room | Four seats stacked overflowed a landscape phone |
 | 2026-11-11 | Touch aim turns by 0.4 of the finger's turn around the cue ball, and ignores the finger within 6 cm of the ball | Relative and finer than pointing; near the ball the finger's angle swings wildly |
 | 2026-11-11 | A touch within 24 CSS px of the stick's axis, from the ball to 1.6 m behind it, pulls; 120 px of pull is full power; under 3% cancels | The drawn stick is 3 to 8 px wide, too thin for a fingertip; 120 px fits a landscape phone |
 | 2026-11-11 | Fine-aim buttons and arrow keys do nothing while the stick is pulled or the slider held | "The slider locks the aim" applies to every aim input |
@@ -130,6 +135,9 @@ Record constant changes and what prompted them.
 
 ## Known issues
 
+- Free-for-all: on a portrait phone with 4 players, long names truncate to about 3 letters in the scoreboard. Balls 16-21 were seen only at normal size in match screenshots; a high-DPI close-up was not taken (testing stopped at the user's request).
+- The last lobby CSS change (two-column free-for-all seats) was exercised by the 4-player browser match, but `npm test`, typecheck and build were not rerun after it.
+
 - Touch aiming is verified only with Chrome's touch emulation (CDP touch events), not on a physical phone. Nothing tells a new player that dragging the stick back shoots; the slider still works.
 - `navigator.vibrate` doesn't exist on iOS Safari, so iPhones get no buzz; Safari also needed a `gesturestart` block for pinch zoom, which is untested.
 
@@ -144,4 +152,5 @@ Record constant changes and what prompted them.
 - 2026-11-05: Milestone 3. Table, controls, assist and hard preview, ball in hand, pocket calling. Played in headless Chrome over DevTools with real mouse, touch and keyboard input, since the Chrome extension wasn't connected. Not tried on a physical phone.
 - 2026-11-05: Milestone 4. Rules as pure functions in `shared/src/rules.ts`, 48 tests in `game.test.ts`. 17 deliberate rule breaks were all caught by the tests. No browser replay: the only client change is using the shared `freeCueSpot`.
 - 2026-11-05: Milestone 5. `Match` authority class, Socket.IO server, bot, client now server-driven. Played a full game against the hard bot in headless Chrome through the dev server, with no page errors or refused moves. The break issue above is still open and the user hasn't chosen, so bot scoring may need rechecking if the break changes.
+- 2026-11-11: Milestone 9. MU_ROLL 0.014 with measurements; touch aiming rebuilt (bug reproduced and fix verified with CDP touch events, both orientations); free-for-all rules, rooms, HUD and lobby. Played a full 1v1v1 (30 shots, all balls down) and 1v1v1v1 (23 shots, clinched with 3 left), each with a window closed and rejoined, no tab mismatches or page errors. 173 tests.
 - 2026-11-11: Visual redesign (6a) and milestone 6. Room tests run through real sockets. Played complete matches in headless Chrome over CDP, one window per player: 1v1 (16 shots), 1v2 in Hard mode (16), 2v2 (16) and vs Bot (13). A driver (`.scratch/drive.ts`, not committed) planned shots with the bot's planner and entered them through real pointer drags, arrow keys, the spin pad and the power slider. Each multiplayer match included a page close and rejoin from sessionStorage. Every tab agreed on the table after every shot, and there were no page errors. Chrome extension not connected; no physical phone.
