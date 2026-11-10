@@ -70,6 +70,8 @@ Update this at the end of every working session. Keep it short and current. Rewr
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-11-11 | Assist shows the ghost ball and only 0.2 m of the target ball's direction; the cue ball path after contact is gone | User asked for less assist. Spec table in PROJECT_CONTEXT.md updated to match. |
+| 2026-11-11 | A socket handshake with no Origin header is allowed even when ALLOWED_ORIGIN is set | Browsers omit Origin on same-origin GETs, so the deployed game refused every player. Cross-site pages and WebSocket upgrades always send it. |
 | 2026-11-05 | The server sends shot keyframes; clients don't simulate results | Avoids divergence between JS engines |
 | 2026-11-05 | 1v2 order is A, B1, A, B2 | Gives each side the same number of turns (user can change this) |
 | 2026-11-05 | Hard mode hides ghost ball and post-contact paths, keeps a short aim line | The request was to hide the target ball's trajectory |

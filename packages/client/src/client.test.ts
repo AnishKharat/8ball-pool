@@ -7,12 +7,13 @@ const shot = { angle: 0, power: 0.5, hitX: 0, hitY: 0 };
 const balls = [{ id: 0, x: -0.5, y: 0 }, { id: 1, x: 0, y: 0 }];
 
 describe('aim preview', () => {
-  it('assist gives a ghost at first contact and both paths', () => {
+  it('assist gives a ghost at first contact and a short target line, no cue path', () => {
     const p = aimPreview('assist', balls, shot)!;
     expect(p.ghost.x).toBeCloseTo(-2 * BALL_R, 6);
     expect(p.targetId).toBe(1);
-    expect(p.targetPath.at(-1)!.x).toBeGreaterThan(0.1);
-    expect(p.cuePath[0]).toEqual(p.ghost);
+    const end = p.targetPath.at(-1)!;
+    expect(Math.hypot(end.x - p.targetPath[0].x, end.y - p.targetPath[0].y)).toBeCloseTo(0.2, 3);
+    expect(p).not.toHaveProperty('cuePath');
   });
 
   it('hard mode produces nothing', () => {

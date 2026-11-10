@@ -30,8 +30,8 @@ A player who pots legally shoots again. When the turn passes, the next player in
 |---|---|---|
 | Cue stick and short fixed-length aim line | Yes | Yes |
 | Ghost ball at first contact | Yes | No |
-| Target ball trajectory after contact | Yes | No |
-| Cue ball path after contact | Yes | No |
+| Target ball direction after contact (short line, 0.2 m) | Yes | No |
+| Cue ball path after contact | No | No |
 
 ### Multiplayer
 

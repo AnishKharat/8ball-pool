@@ -459,7 +459,6 @@ export function drawPreview(v: View, p: Preview) {
   ctx.beginPath();
   ctx.arc(p.ghost.x, p.ghost.y, BALL_R, 0, 2 * Math.PI);
   ctx.stroke();
-  polyline(ctx, p.cuePath);
   ctx.strokeStyle = '#ffd166';
   polyline(ctx, p.targetPath);
 }
